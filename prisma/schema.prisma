@@ -1,0 +1,278 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String   @id @default(cuid())
+  email         String   @unique
+  name          String?
+  password      String?
+  phone         String?
+  role          String   @default("client") // admin, member, client
+  avatar        String?
+  isActive      Boolean  @default(true)
+  status        String   @default("active") // active, inactive, suspended
+  emailVerified Boolean  @default(true)  // Default true to bypass verification
+  phoneVerified Boolean  @default(true)  // Default true to bypass verification
+  twoFactorEnabled Boolean @default(false)
+  twoFactorSecret String?
+  
+  // Member/ISP specific fields
+  businessName    String?
+  businessRegNo   String?
+  businessAddress String?
+  kraPin          String?
+  
+  // Client specific fields
+  memberId        String?  // Reference to their ISP
+  
+  // OKOA INTERNET
+  okoaBalance     Float    @default(0)
+  okoaLimit       Float    @default(500)
+  okoaUsed        Float    @default(0)
+  
+  // Package tracking
+  activePackageId String?
+  packageExpiry   DateTime?
+  dataUsed        Float    @default(0)
+  dataLimit       Float    @default(0)
+  connectionStatus String @default("disconnected")
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  member          User?     @relation("MemberClients", fields: [memberId], references: [id])
+  clients         User[]    @relation("MemberClients")
+  activePackage   Package?  @relation("ActivePackage", fields: [activePackageId], references: [id])
+  ispPackages     Package[] @relation("PackageISP")
+  packages        Package[] @relation("PackageCreator")
+  transactions    Transaction[]
+  routers         Router[]
+  tickets         Ticket[]  @relation("TicketCreator")
+  assignedTickets Ticket[]  @relation("TicketAssignee")
+  sentMessages    Message[] @relation("SentMessages")
+  apiKeys         ApiKey[]
+  webhooks        Webhook[]
+  notifications   Notification[]
+  sessions        Session[]
+  accounts        Account[]
+
+  @@index([role])
+  @@index([memberId])
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model Package {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  speedDown   Float    @default(5)
+  speedUp     Float    @default(2)
+  speed       String   @default("5Mbps") // Display string e.g. "10Mbps"
+  dataLimitMB Float    @default(0) // MB, 0 = unlimited
+  dataLimit   String?  // Display string e.g. "50GB" or "Unlimited"
+  price       Float
+  duration    Int      @default(30) // Days
+  durationStr String   @default("30d") // Display string e.g. "24h", "7d", "30d"
+  type        String   @default("standard") // standard, premium, okoa
+  isActive    Boolean  @default(true)
+  ispId       String?
+  createdBy   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  isp         User?    @relation("PackageISP", fields: [ispId], references: [id])
+  subscribers User[]   @relation("ActivePackage")
+  creator     User?    @relation("PackageCreator", fields: [createdBy], references: [id])
+  transactions Transaction[]
+
+  @@index([ispId])
+  @@index([isActive])
+}
+
+model Transaction {
+  id            String   @id @default(cuid())
+  userId        String
+  packageId     String?
+  amount        Float
+  type          String   // purchase, okoa, topup, refund, repayment
+  status        String   @default("pending") // pending, completed, failed, refunded
+  mpesaCode     String?
+  mpesaPhone    String?
+  mpesaReceipt  String?
+  okoaAmount    Float    @default(0)
+  serviceFee    Float    @default(0)
+  description   String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  user          User     @relation(fields: [userId], references: [id])
+  package       Package? @relation(fields: [packageId], references: [id])
+
+  @@index([userId])
+  @@index([type])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model Router {
+  id               String   @id @default(cuid())
+  name             String
+  ipAddress        String
+  username         String   @default("admin")
+  password         String   @default("")
+  model            String?
+  location         String?
+  status           String   @default("offline") // online, offline, warning
+  connectedClients Int      @default(0)
+  isActive         Boolean  @default(true)
+  ownerId          String
+  lastSeen         DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  user             User     @relation(fields: [ownerId], references: [id])
+
+  @@index([ownerId])
+  @@index([status])
+}
+
+model Ticket {
+  id          String   @id @default(cuid())
+  subject     String
+  description String
+  status      String   @default("open") // open, in_progress, resolved, closed
+  priority    String   @default("medium") // low, medium, high, urgent
+  category    String?
+  userId      String
+  assignedTo  String?
+  ispId       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  user        User     @relation("TicketCreator", fields: [userId], references: [id])
+  assignee    User?    @relation("TicketAssignee", fields: [assignedTo], references: [id])
+  responses   TicketResponse[]
+
+  @@index([userId])
+  @@index([assignedTo])
+  @@index([ispId])
+  @@index([status])
+}
+
+model TicketResponse {
+  id        String   @id @default(cuid())
+  ticketId  String
+  userId    String
+  userName  String?
+  message   String
+  createdAt DateTime @default(now())
+  ticket    Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId])
+}
+
+model Message {
+  id          String   @id @default(cuid())
+  senderId    String
+  recipientId String?  // Single recipient or null for broadcast
+  recipient   String?  // Email/phone or "all"
+  subject     String
+  content     String
+  type        String   @default("email") // email, sms, in_app
+  status      String   @default("pending") // pending, sent, delivered, failed
+  sentAt      DateTime?
+  createdAt   DateTime @default(now())
+  sender      User     @relation("SentMessages", fields: [senderId], references: [id])
+
+  @@index([senderId])
+  @@index([status])
+}
+
+model ApiKey {
+  id          String   @id @default(cuid())
+  name        String
+  key         String   @unique
+  userId      String
+  permissions String   @default("read")
+  isActive    Boolean  @default(true)
+  lastUsed    DateTime?
+  expiresAt   DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  user        User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([key])
+}
+
+model Webhook {
+  id              String   @id @default(cuid())
+  name            String
+  url             String
+  events          String   // JSON array of events
+  secret          String?
+  isActive        Boolean  @default(true)
+  userId          String
+  lastTriggeredAt DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  user            User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+model SystemSetting {
+  id    String @id @default(cuid())
+  key   String @unique
+  value String
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  title     String
+  message   String
+  type      String   @default("info") // info, warning, error, success
+  userId    String?
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+  user      User?    @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([isRead])
+}
