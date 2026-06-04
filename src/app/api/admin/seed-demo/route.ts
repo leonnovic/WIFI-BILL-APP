@@ -2,264 +2,346 @@ import { NextResponse } from "next/server"
 import { getServerSession } from "next-auth"
 import { authOptions } from "@/lib/auth"
 import { db } from "@/lib/db"
-import { hashPassword } from "@/lib/auth-helpers"
+import crypto from "crypto"
+import bcrypt from "bcryptjs"
 
 export async function POST() {
   try {
     const session = await getServerSession(authOptions)
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }
-    const userRole = (session.user as any).role
-    if (userRole !== "admin") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+    if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    if ((session.user as any).role !== "admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+
+    const existingUsers = await db.user.count()
+    if (existingUsers > 0) {
+      return NextResponse.json({ data: { message: "Demo data already exists. Skipping seed.", existing: true } })
     }
 
-    // Seed demo data
+    // Create admin user
+    const admin = await db.user.create({
+      data: {
+        email: "admin@ispledger.com",
+        name: "System Admin",
+        password: await bcrypt.hash("admin123", 12),
+        role: "admin",
+        status: "active",
+        phone: "+254700000000",
+        emailVerified: true,
+        phoneVerified: true,
+        isActive: true,
+      },
+    })
 
-    // 1. Create admin user (if not exists)
-    const adminExists = await db.user.findUnique({ where: { email: "admin@ispledger.com" } })
-    if (!adminExists) {
-      await db.user.create({
+    // Create ISP Members
+    const memberNames = [
+      { name: "John Mwangi", business: "FastNet Solutions", kra: "A123456789" },
+      { name: "Sarah Wanjiku", business: "Mombasa Connect", kra: "B234567890" },
+      { name: "David Ochieng", business: "Kisumu Digital", kra: "C345678901" },
+      { name: "Grace Achieng", business: "Rift Valley ISP", kra: "D456789012" },
+      { name: "Peter Kamau", business: "Central WiFi Hub", kra: "E567890123" },
+    ]
+    const members = []
+    for (const m of memberNames) {
+      const member = await db.user.create({
         data: {
-          email: "admin@ispledger.com",
-          password: await hashPassword("Admin@123"),
-          name: "System Admin",
-          role: "admin",
-          isActive: true,
+          email: m.business.toLowerCase().replace(/\s+/g, "") + "@example.com",
+          name: m.name,
+          password: await bcrypt.hash("member123", 12),
+          role: "member",
           status: "active",
+          businessName: m.business,
+          kraPin: m.kra,
+          phone: `+2547${Math.floor(10000000 + Math.random() * 90000000)}`,
           emailVerified: true,
           phoneVerified: true,
+          isActive: true,
         },
       })
+      members.push(member)
     }
 
-    // 2. Create member users
-    const memberEmails = ["member1@ispledger.com", "member2@ispledger.com", "member3@ispledger.com"]
-    const memberNames = ["John Mwangi", "Sarah Wanjiku", "Peter Ochieng"]
-    const businessNames = ["NairobiNet ISP", "Mombasa Connect", "Kisumu Broadband"]
-    const memberIds: string[] = []
+    // Create known demo ISP account
+    const demoMember = await db.user.create({
+      data: {
+        email: "isp@fastnet.com",
+        name: "FastNet Demo ISP",
+        password: await bcrypt.hash("member123", 12),
+        role: "member",
+        status: "active",
+        businessName: "FastNet Internet",
+        kraPin: "F987654321",
+        phone: "+254722000000",
+        emailVerified: true,
+        phoneVerified: true,
+        isActive: true,
+      },
+    })
+    members.push(demoMember)
 
-    for (let i = 0; i < memberEmails.length; i++) {
-      const existing = await db.user.findUnique({ where: { email: memberEmails[i] } })
-      if (!existing) {
-        const member = await db.user.create({
-          data: {
-            email: memberEmails[i],
-            password: await hashPassword("Member@123"),
-            name: memberNames[i],
-            role: "member",
-            isActive: true,
-            status: "active",
-            emailVerified: true,
-            phoneVerified: true,
-            businessName: businessNames[i],
-            businessRegNo: `REG${1000 + i}`,
-            businessAddress: `${memberNames[i].split(" ")[1]} Street, Kenya`,
-            kraPin: `A00${1000000 + i}B`,
-          },
-        })
-        memberIds.push(member.id)
-      } else {
-        memberIds.push(existing.id)
-      }
-    }
-
-    // 3. Create client users (assign to members)
-    const clientData = [
-      { email: "client1@test.com", name: "Alice Kamau", memberIdIdx: 0 },
-      { email: "client2@test.com", name: "Bob Odhiambo", memberIdIdx: 0 },
-      { email: "client3@test.com", name: "Carol Akinyi", memberIdIdx: 1 },
-      { email: "client4@test.com", name: "David Mutua", memberIdIdx: 1 },
-      { email: "client5@test.com", name: "Eve Njeri", memberIdIdx: 2 },
-      { email: "client6@test.com", name: "Frank Kiprop", memberIdIdx: 2 },
-      { email: "client7@test.com", name: "Grace Auma", memberIdIdx: 0 },
-      { email: "client8@test.com", name: "Henry Musyoka", memberIdIdx: 1 },
-    ]
-
-    const clientIds: string[] = []
-    for (const c of clientData) {
-      const existing = await db.user.findUnique({ where: { email: c.email } })
-      if (!existing) {
-        const client = await db.user.create({
-          data: {
-            email: c.email,
-            password: await hashPassword("Client@123"),
-            name: c.name,
-            phone: `2547${Math.floor(10000000 + Math.random() * 90000000)}`,
-            role: "client",
-            isActive: true,
-            status: "active",
-            emailVerified: true,
-            phoneVerified: true,
-            memberId: memberIds[c.memberIdIdx],
-            okoaLimit: 500,
-            connectionStatus: Math.random() > 0.3 ? "connected" : "disconnected",
-          },
-        })
-        clientIds.push(client.id)
-      } else {
-        clientIds.push(existing.id)
-      }
-    }
-
-    // 4. Create packages
+    // Create Packages
     const packageData = [
-      { name: "Basic 5Mbps", speedDown: 5, speedUp: 2, speed: "5Mbps", price: 500, duration: 30, durationStr: "30d", type: "standard", ispIdx: 0 },
-      { name: "Standard 10Mbps", speedDown: 10, speedUp: 5, speed: "10Mbps", price: 1000, duration: 30, durationStr: "30d", type: "standard", ispIdx: 0 },
-      { name: "Premium 20Mbps", speedDown: 20, speedUp: 10, speed: "20Mbps", price: 2000, duration: 30, durationStr: "30d", type: "premium", ispIdx: 0 },
-      { name: "Daily Pass", speedDown: 5, speedUp: 2, speed: "5Mbps", price: 50, duration: 1, durationStr: "24h", type: "standard", ispIdx: 1 },
-      { name: "Weekly Lite", speedDown: 8, speedUp: 3, speed: "8Mbps", price: 250, duration: 7, durationStr: "7d", type: "standard", ispIdx: 1 },
-      { name: "Weekly Premium", speedDown: 15, speedUp: 8, speed: "15Mbps", price: 500, duration: 7, durationStr: "7d", type: "premium", ispIdx: 1 },
-      { name: "OKOA Basic", speedDown: 3, speedUp: 1, speed: "3Mbps", price: 100, duration: 3, durationStr: "3d", type: "okoa", ispIdx: 2 },
-      { name: "OKOA Standard", speedDown: 5, speedUp: 2, speed: "5Mbps", price: 200, duration: 5, durationStr: "5d", type: "okoa", ispIdx: 2 },
+      { name: "Starter 5Mbps", speed: "5Mbps", speedDown: 5, speedUp: 2, dataLimit: "20GB", dataLimitMB: 20480, price: 1500, duration: 30, durationStr: "30 days", type: "standard" },
+      { name: "Home 10Mbps", speed: "10Mbps", speedDown: 10, speedUp: 5, dataLimit: "50GB", dataLimitMB: 51200, price: 2500, duration: 30, durationStr: "30 days", type: "standard" },
+      { name: "Home 20Mbps", speed: "20Mbps", speedDown: 20, speedUp: 10, dataLimit: "Unlimited", dataLimitMB: 0, price: 4000, duration: 30, durationStr: "30 days", type: "premium" },
+      { name: "Premium 50Mbps", speed: "50Mbps", speedDown: 50, speedUp: 25, dataLimit: "Unlimited", dataLimitMB: 0, price: 7000, duration: 30, durationStr: "30 days", type: "premium" },
+      { name: "Business 10Mbps", speed: "10Mbps", speedDown: 10, speedUp: 10, dataLimit: "Unlimited", dataLimitMB: 0, price: 5000, duration: 30, durationStr: "30 days", type: "premium" },
+      { name: "Business 50Mbps", speed: "50Mbps", speedDown: 50, speedUp: 50, dataLimit: "Unlimited", dataLimitMB: 0, price: 12000, duration: 30, durationStr: "30 days", type: "premium" },
+      { name: "Enterprise 100Mbps", speed: "100Mbps", speedDown: 100, speedUp: 100, dataLimit: "Unlimited", dataLimitMB: 0, price: 25000, duration: 30, durationStr: "30 days", type: "premium" },
+      { name: "OKOA 500MB", speed: "2Mbps", speedDown: 2, speedUp: 1, dataLimit: "500MB", dataLimitMB: 500, price: 50, duration: 1, durationStr: "24 hours", type: "okoa" },
+      { name: "OKOA 1GB", speed: "5Mbps", speedDown: 5, speedUp: 2, dataLimit: "1GB", dataLimitMB: 1024, price: 100, duration: 1, durationStr: "24 hours", type: "okoa" },
+      { name: "Daily Pass", speed: "10Mbps", speedDown: 10, speedUp: 5, dataLimit: "Unlimited", dataLimitMB: 0, price: 200, duration: 1, durationStr: "24 hours", type: "standard" },
     ]
-
-    const packageIds: string[] = []
-    for (const p of packageData) {
-      const existing = await db.package.findFirst({ where: { name: p.name } })
-      if (!existing) {
-        const pkg = await db.package.create({
-          data: {
-            name: p.name,
-            speedDown: p.speedDown,
-            speedUp: p.speedUp,
-            speed: p.speed,
-            dataLimitMB: 0,
-            dataLimit: "Unlimited",
-            price: p.price,
-            duration: p.duration,
-            durationStr: p.durationStr,
-            type: p.type,
-            ispId: memberIds[p.ispIdx],
-          },
-        })
-        packageIds.push(pkg.id)
-      } else {
-        packageIds.push(existing.id)
-      }
-    }
-
-    // 5. Assign packages to some clients and create transactions
-    for (let i = 0; i < clientIds.length && i < packageIds.length; i++) {
-      const pkgIdx = Math.min(i, packageIds.length - 1)
-      const expiryDate = new Date()
-      expiryDate.setDate(expiryDate.getDate() + packageData[pkgIdx].duration)
-
-      await db.user.update({
-        where: { id: clientIds[i] },
+    const packages = []
+    for (const pkg of packageData) {
+      const created = await db.package.create({
         data: {
-          activePackageId: packageIds[pkgIdx],
-          packageExpiry: expiryDate,
-          dataLimit: packageData[pkgIdx].dataLimitMB || 0,
+          ...pkg,
+          ispId: members[Math.floor(Math.random() * members.length)].id,
+          createdBy: admin.id,
+          isActive: true,
         },
       })
+      packages.push(created)
+    }
 
-      // Create transaction for this purchase
-      const txDate = new Date()
-      txDate.setDate(txDate.getDate() - Math.floor(Math.random() * 30))
+    // Create Clients
+    const firstNames = ["Alice", "Bob", "Carol", "Dan", "Eve", "Frank", "Grace", "Helen", "Ivan", "Julia", "Kevin", "Lucy", "Mark", "Nancy", "Oscar", "Patricia", "Quinn", "Rachel", "Steve", "Tina"]
+    const lastNames = ["Odongo", "Wambui", "Kipchoge", "Musyoka", "Otieno", "Njeri", "Kariuki", "Auma", "Muthoni", "Odhiambo"]
+    const clients = []
+    for (let i = 0; i < 20; i++) {
+      const member = members[i % members.length]
+      const pkg = packages[i % packages.length]
+      const firstName = firstNames[i]
+      const lastName = lastNames[i % lastNames.length]
+      const client = await db.user.create({
+        data: {
+          email: `${firstName.toLowerCase()}.${lastName.toLowerCase()}${i}@example.com`,
+          name: `${firstName} ${lastName}`,
+          password: await bcrypt.hash("client123", 12),
+          role: "client",
+          status: i === 19 ? "inactive" : "active",
+          phone: `+2547${Math.floor(10000000 + Math.random() * 90000000)}`,
+          memberId: member.id,
+          activePackageId: pkg.id,
+          packageExpiry: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+          okoaBalance: Math.random() > 0.7 ? Math.floor(Math.random() * 500) : 0,
+          okoaLimit: 500,
+          okoaUsed: Math.random() > 0.7 ? Math.floor(Math.random() * 300) : 0,
+          emailVerified: true,
+          phoneVerified: true,
+          isActive: i !== 19,
+        },
+      })
+      clients.push(client)
+    }
+
+    // Create demo client john@example.com
+    const demoClient = await db.user.create({
+      data: {
+        email: "john@example.com",
+        name: "John Demo",
+        password: await bcrypt.hash("client123", 12),
+        role: "client",
+        status: "active",
+        phone: "+254712345678",
+        memberId: demoMember.id,
+        activePackageId: packages[2].id,
+        packageExpiry: new Date(Date.now() + 25 * 24 * 60 * 60 * 1000),
+        okoaBalance: 150,
+        okoaLimit: 500,
+        okoaUsed: 350,
+        emailVerified: true,
+        phoneVerified: true,
+        isActive: true,
+      },
+    })
+    clients.push(demoClient)
+
+    // Create Transactions
+    const txTypes = ["purchase", "okoa", "topup", "refund"]
+    const txStatuses = ["completed", "completed", "completed", "completed", "pending", "failed"]
+    for (let i = 0; i < 50; i++) {
+      const user = clients[Math.floor(Math.random() * clients.length)]
+      const type = txTypes[Math.floor(Math.random() * txTypes.length)]
+      const status = txStatuses[Math.floor(Math.random() * txStatuses.length)]
+      const amount = type === "okoa" ? Math.floor(Math.random() * 200 + 50)
+        : type === "topup" ? Math.floor(Math.random() * 3000 + 500)
+        : type === "refund" ? Math.floor(Math.random() * 1000 + 200)
+        : Math.floor(Math.random() * 8000 + 1000)
+      const daysAgo = Math.floor(Math.random() * 60)
+      const createdAt = new Date()
+      createdAt.setDate(createdAt.getDate() - daysAgo)
 
       await db.transaction.create({
         data: {
-          userId: clientIds[i],
-          packageId: packageIds[pkgIdx],
-          amount: packageData[pkgIdx].price,
-          type: "purchase",
-          status: "completed",
-          mpesaCode: `QJK${Math.floor(100000000 + Math.random() * 900000000)}`,
-          mpesaPhone: `2547${Math.floor(10000000 + Math.random() * 90000000)}`,
-          description: `Purchase of ${packageData[pkgIdx].name}`,
-          createdAt: txDate,
+          userId: user.id,
+          packageId: type === "purchase" ? packages[Math.floor(Math.random() * packages.length)].id : null,
+          type,
+          amount,
+          status,
+          mpesaCode: status === "completed" ? `QKH${Math.floor(Math.random() * 9000000000 + 1000000000)}` : null,
+          mpesaPhone: user.phone,
+          mpesaReceipt: status === "completed" ? `NLK${Math.floor(Math.random() * 900000000 + 100000000)}` : null,
+          okoaAmount: type === "okoa" ? amount * 0.9 : 0,
+          serviceFee: type === "okoa" ? amount * 0.1 : 0,
+          description: `${type} - ${user.name}`,
+          createdAt,
         },
       })
     }
 
-    // 6. Create routers
-    const routerData = [
-      { name: "Nairobi Router 1", ip: "192.168.1.1", ownerIdx: 0, location: "Nairobi CBD" },
-      { name: "Nairobi Router 2", ip: "192.168.1.2", ownerIdx: 0, location: "Westlands" },
-      { name: "Mombasa Router 1", ip: "192.168.2.1", ownerIdx: 1, location: "Mombasa Town" },
-      { name: "Kisumu Router 1", ip: "192.168.3.1", ownerIdx: 2, location: "Kisumu CBD" },
-    ]
-
-    for (const r of routerData) {
-      const existing = await db.router.findFirst({ where: { name: r.name } })
-      if (!existing) {
-        await db.router.create({
-          data: {
-            name: r.name,
-            ipAddress: r.ip,
-            username: "admin",
-            password: "admin",
-            location: r.location,
-            status: Math.random() > 0.3 ? "online" : "offline",
-            connectedClients: Math.floor(Math.random() * 50) + 5,
-            ownerId: memberIds[r.ownerIdx],
-            lastSeen: new Date(),
-          },
-        })
-      }
+    // Create Routers
+    const routerModels = ["RB750Gr3", "hAP ac2", "RB4011iGS+", "CCR1009-7G-1C-1S+", "hEX S"]
+    const locations = ["Nairobi CBD", "Westlands", "Mombasa Road", "Thika Road", "Kilimani"]
+    for (let i = 0; i < 5; i++) {
+      await db.router.create({
+        data: {
+          name: `Router-${String(i + 1).padStart(3, "0")}`,
+          ipAddress: `192.168.${i + 1}.1`,
+          username: "admin",
+          password: "demo123",
+          model: routerModels[i],
+          location: locations[i],
+          status: i === 4 ? "offline" : "online",
+          connectedClients: Math.floor(Math.random() * 50 + 10),
+          ownerId: members[i].id,
+          isActive: true,
+          lastSeen: i === 4 ? null : new Date(),
+        },
+      })
     }
 
-    // 7. Create tickets
-    const ticketData = [
-      { subject: "No internet connection", desc: "I have been unable to connect for the past 2 hours", clientIdx: 0, status: "open", priority: "high" },
-      { subject: "Slow speeds", desc: "My internet is very slow, getting less than 1Mbps", clientIdx: 1, status: "in_progress", priority: "medium" },
-      { subject: "Billing issue", desc: "I was charged twice for my last package purchase", clientIdx: 2, status: "open", priority: "high" },
-      { subject: "Request for package upgrade", desc: "I would like to upgrade to a faster package", clientIdx: 3, status: "resolved", priority: "low" },
-      { subject: "Router not working", desc: "The router in my area seems to be down", clientIdx: 4, status: "open", priority: "urgent" },
-    ]
-
-    for (const t of ticketData) {
-      const existing = await db.ticket.findFirst({ where: { subject: t.subject } })
-      if (!existing && clientIds[t.clientIdx]) {
-        await db.ticket.create({
-          data: {
-            subject: t.subject,
-            description: t.desc,
-            userId: clientIds[t.clientIdx],
-            status: t.status,
-            priority: t.priority,
-            category: "technical",
-            ispId: memberIds[Math.floor(Math.random() * memberIds.length)],
-          },
-        })
-      }
+    // Create Tickets
+    const ticketSubjects = ["Internet not working", "Slow speeds", "Router configuration issue", "Billing discrepancy", "OKOA credit not applied", "WiFi signal weak", "Account locked", "Package upgrade request", "Payment not reflecting", "Installation request"]
+    const priorities = ["low", "medium", "medium", "high", "urgent"]
+    const ticketStatuses = ["open", "in_progress", "resolved", "closed"]
+    for (let i = 0; i < 10; i++) {
+      const clientUser = clients[i % clients.length]
+      const memberUser = members[i % members.length]
+      await db.ticket.create({
+        data: {
+          subject: ticketSubjects[i],
+          description: `Customer reports: ${ticketSubjects[i].toLowerCase()}. Please investigate and resolve.`,
+          priority: priorities[Math.floor(Math.random() * priorities.length)],
+          status: ticketStatuses[i % ticketStatuses.length],
+          category: ["technical", "billing", "general", "account"][i % 4],
+          userId: clientUser.id,
+          assignedTo: i < 5 ? members[i % members.length].id : null,
+          ispId: memberUser.id,
+        },
+      })
     }
 
-    // 8. Create system settings
-    const defaultSettings: Record<string, string> = {
+    // Create System Settings
+    const systemSettings: Record<string, string> = {
       site_name: "ISPLedger",
-      site_description: "WiFi Billing & ISP Management System",
-      default_currency: "KES",
-      okoa_service_fee_percent: "10",
-      okoa_default_limit: "500",
+      site_logo: "",
+      currency: "KES",
+      mpesa_enabled: "true",
+      okoa_enabled: "true",
+      default_okoa_limit: "500",
+      maintenance_mode: "false",
       mpesa_environment: "sandbox",
-      sms_environment: "sandbox",
-      email_from_name: "ISPLedger",
-      auth_google_enabled: "false",
-      auth_apple_enabled: "false",
+      mpesa_consumer_key: "demo_consumer_key",
+      mpesa_consumer_secret: "demo_consumer_secret",
+      mpesa_passkey: "bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919",
+      mpesa_shortcode: "174379",
+      sms_gateway: "africaistalking",
+      sms_api_key: "demo_sms_key",
+      sms_sender_id: "ISPLedger",
+      email_provider: "smtp",
+      email_host: "smtp.example.com",
+      email_port: "587",
+      email_user: "noreply@ispledger.com",
+      email_password: "demo_email_password",
+      auth_google: JSON.stringify({ enabled: false, clientId: "", clientSecret: "" }),
+      auth_phone_otp: JSON.stringify({ enabled: true, length: 6, expiry: "5m" }),
+      auth_email_verification: JSON.stringify({ enabled: true, requireOnSignup: false }),
     }
-
-    for (const [key, value] of Object.entries(defaultSettings)) {
+    for (const [key, value] of Object.entries(systemSettings)) {
       await db.systemSetting.upsert({
         where: { key },
-        update: {},
+        update: { value },
         create: { key, value },
       })
     }
 
-    return NextResponse.json({
-      message: "Demo data seeded successfully",
+    // Create Messages
+    for (let i = 0; i < 8; i++) {
+      await db.message.create({
+        data: {
+          senderId: admin.id,
+          recipient: clients[i % clients.length].phone || clients[i % clients.length].email,
+          subject: i < 4 ? `ISPLedger Update #${i + 1}` : "SMS Notification",
+          content: i < 4
+            ? "Dear customer, your internet package has been updated. Thank you for choosing ISPLedger."
+            : "Your ISPLedger account has been updated. Dial *123# for more.",
+          type: i < 4 ? "email" : "sms",
+          status: ["sent", "delivered", "pending", "failed"][i % 4],
+          sentAt: new Date(),
+        },
+      })
+    }
+
+    // Create API Keys
+    await db.apiKey.create({
       data: {
-        members: memberIds.length,
-        clients: clientIds.length,
-        packages: packageIds.length,
+        name: "Production API Key",
+        key: `isl_${crypto.randomBytes(32).toString("hex")}`,
+        userId: admin.id,
+        permissions: "read,write",
+        isActive: true,
+        lastUsed: new Date(),
+      },
+    })
+    await db.apiKey.create({
+      data: {
+        name: "Monitoring Key",
+        key: `isl_${crypto.randomBytes(32).toString("hex")}`,
+        userId: admin.id,
+        permissions: "read",
+        isActive: true,
+        lastUsed: new Date(Date.now() - 86400000),
       },
     })
 
+    // Create Webhooks
+    await db.webhook.create({
+      data: {
+        name: "Payment Notification",
+        url: "https://example.com/webhooks/payments",
+        events: JSON.stringify(["transaction.created", "transaction.completed"]),
+        secret: "whsec_demo_secret",
+        isActive: true,
+        userId: admin.id,
+      },
+    })
+    await db.webhook.create({
+      data: {
+        name: "User Registration",
+        url: "https://example.com/webhooks/users",
+        events: JSON.stringify(["user.registered"]),
+        isActive: true,
+        userId: admin.id,
+      },
+    })
+
+    return NextResponse.json({
+      data: {
+        message: "Demo data seeded successfully",
+        counts: {
+          users: 1 + members.length + clients.length,
+          packages: packages.length,
+          transactions: 50,
+          routers: 5,
+          tickets: 10,
+          messages: 8,
+          apiKeys: 2,
+          webhooks: 2,
+        },
+      },
+    })
   } catch (error) {
-    console.error("Seed demo error:", error)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    console.error("Seed error:", error)
+    return NextResponse.json({ error: "Failed to seed demo data", details: String(error) }, { status: 500 })
   }
 }

@@ -4,6 +4,7 @@ import "./globals.css"
 import { ThemeProvider } from "next-themes"
 import { Toaster } from "sonner"
 import { QueryClientProvider } from "@/components/providers/query-provider"
+import { AuthProvider } from "@/components/providers/auth-provider"
 
 const inter = Inter({
   variable: "--font-geist-sans",
@@ -36,7 +37,9 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           <QueryClientProvider>
-            {children}
+            <AuthProvider>
+              {children}
+            </AuthProvider>
             <Toaster
               position="top-right"
               richColors

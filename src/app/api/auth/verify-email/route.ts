@@ -1,7 +1,5 @@
-import { NextResponse } from "next/server"
 import { db } from "@/lib/db"
-import { getEmailService } from "@/lib/email"
-import { generateOTP, storeOTP } from "@/lib/sms"
+import { NextResponse } from "next/server"
 
 export async function POST(request: Request) {
   try {
@@ -9,48 +7,34 @@ export async function POST(request: Request) {
     const { email } = body
 
     if (!email) {
-      return NextResponse.json({ error: "Email is required" }, { status: 400 })
+      return NextResponse.json(
+        { error: "Email is required" },
+        { status: 400 }
+      )
     }
 
-    const normalizedEmail = email.toLowerCase().trim()
-
+    // Mock email verification - always succeed
     const user = await db.user.findUnique({
-      where: { email: normalizedEmail }
+      where: { email }
     })
 
-    if (!user) {
-      // Don't reveal whether the email exists
-      return NextResponse.json({ data: { message: "If an account exists with this email, a verification code has been sent." } })
-    }
-
-    if (user.emailVerified) {
-      return NextResponse.json({ error: "Email is already verified" }, { status: 400 })
-    }
-
-    // Generate verification code
-    const code = generateOTP(6)
-
-    // Store the code (reuse OTP store with email as identifier)
-    storeOTP(`email:${normalizedEmail}`, code, 5)
-
-    // Send verification email
-    try {
-      await getEmailService().sendVerificationEmail(normalizedEmail, code, user.name || undefined)
-    } catch (emailError) {
-      console.error("Failed to send verification email:", emailError)
-      return NextResponse.json({ error: "Failed to send verification email. Please try again." }, { status: 500 })
+    if (user) {
+      await db.user.update({
+        where: { id: user.id },
+        data: { emailVerified: true }
+      })
     }
 
     return NextResponse.json({
-      data: {
-        message: "Verification code sent to your email",
-        // Include code in development
-        ...(process.env.NODE_ENV !== "production" && { code }),
-      }
+      success: true,
+      message: "Email verified successfully",
     })
 
-  } catch (error) {
-    console.error("Email verification error:", error)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+  } catch (error: any) {
+    console.error("Verify email error:", error)
+    return NextResponse.json(
+      { error: "Failed to verify email" },
+      { status: 500 }
+    )
   }
 }

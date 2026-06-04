@@ -46,9 +46,17 @@ class EmailService {
   private async getTransporter() {
     if (this.transporter) return this.transporter
 
+    // Nodemailer is optional - if not installed, use mock email
+    // Install with: npm install nodemailer && npm install -D @types/nodemailer
     try {
-      // Dynamic import to avoid build errors if nodemailer is not installed
-      const nodemailer = await import('nodemailer')
+      let nodemailer: any
+      try {
+        nodemailer = require('nodemailer')
+      } catch {
+        this.transporter = null
+        return null
+      }
+
       this.transporter = nodemailer.createTransport({
         host: this.config.host,
         port: this.config.port,

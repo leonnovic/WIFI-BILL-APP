@@ -1,172 +1,279 @@
 "use client"
 
-import { useEffect, useState } from "react"
-import { motion } from "framer-motion"
-import { Package, CreditCard, MessageSquare, Wifi, ArrowUp, ArrowDown, Database, Clock, Zap, Loader2 } from "lucide-react"
+import { useState, useEffect } from "react"
+import { Package, CreditCard, MessageSquare, Wifi, ArrowUp, ArrowDown, Database, Clock, Zap, Signal, AlertCircle, TrendingUp, ExternalLink } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import Link from "next/link"
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts"
+import { motion } from "framer-motion"
 import { toast } from "sonner"
+import { format } from "date-fns"
 
-interface DashboardData {
-  user: {
-    id: string
-    name: string | null
-    email: string
-    okoaBalance: number
-    okoaLimit: number
-    okoaUsed: number
-    dataUsed: number
-    dataLimit: number
-    connectionStatus: string
-    packageExpiry: string | null
-    activePackageId: string | null
-    activePackage: {
-      id: string
-      name: string
-      speed: string
-      speedDown: number
-      speedUp: number
-      dataLimit: string | null
-      dataLimitMB: number
-      price: number
-      duration: number
-    } | null
-  } | null
-  recentTransactions: {
-    id: string
-    type: string
-    amount: number
-    status: string
-    description: string | null
-    createdAt: string
-  }[]
+const staggerContainer = {
+  hidden: { opacity: 0 },
+  show: {
+    opacity: 1,
+    transition: { staggerChildren: 0.08 },
+  },
 }
 
-const fadeIn = { initial: { opacity: 0, y: 15 }, animate: { opacity: 1, y: 0 } }
-
-const usageData = [
-  { day: "Mon", usage: 450 }, { day: "Tue", usage: 620 }, { day: "Wed", usage: 380 },
-  { day: "Thu", usage: 510 }, { day: "Fri", usage: 750 }, { day: "Sat", usage: 890 }, { day: "Sun", usage: 670 },
-]
+const staggerItem = {
+  hidden: { opacity: 0, y: 16 },
+  show: { opacity: 1, y: 0, transition: { duration: 0.3, ease: "easeOut" } },
+}
 
 export default function ClientDashboard() {
-  const [data, setData] = useState<DashboardData | null>(null)
+  const [data, setData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    async function fetchDashboard() {
+    async function fetchData() {
       try {
         const res = await fetch("/api/client/dashboard")
-        if (res.ok) { const json = await res.json(); setData(json) }
-        else { toast.error("Failed to load dashboard") }
-      } catch { toast.error("Failed to load dashboard") }
-      finally { setLoading(false) }
+        if (res.ok) {
+          const json = await res.json()
+          setData(json.data)
+        } else {
+          toast.error("Failed to load dashboard data")
+        }
+      } catch {
+        toast.error("Network error. Please check your connection.")
+      } finally {
+        setLoading(false)
+      }
     }
-    fetchDashboard()
+    fetchData()
   }, [])
 
-  if (loading) {
-    return (
-      <div className="space-y-6">
-        <div className="h-8 w-48 bg-[#1e293b] rounded animate-pulse" />
-        <div className="grid grid-cols-3 gap-3">{[...Array(3)].map((_, i) => <div key={i} className="h-20 bg-[#1e293b] rounded animate-pulse" />)}</div>
-        <Card className="bg-[#111827] border-[#1e293b] animate-pulse"><CardContent className="p-6"><div className="h-40 bg-[#1e293b] rounded" /></CardContent></Card>
+  if (loading) return (
+    <div className="space-y-6">
+      <div className="h-8 w-48 bg-[#1e293b] rounded animate-pulse" />
+      <div className="grid grid-cols-3 gap-3">
+        {[...Array(3)].map((_, i) => (
+          <Card key={i} className="bg-[#111827] border-[#1e293b] animate-pulse">
+            <CardContent className="p-4"><div className="h-16 bg-[#1e293b] rounded" /></CardContent>
+          </Card>
+        ))}
       </div>
-    )
+      {[...Array(3)].map((_, i) => (
+        <Card key={i} className="bg-[#111827] border-[#1e293b] animate-pulse">
+          <CardContent className="p-6"><div className="h-32 bg-[#1e293b] rounded" /></CardContent>
+        </Card>
+      ))}
+    </div>
+  )
+
+  if (!data) return (
+    <div className="flex items-center justify-center py-20">
+      <div className="text-center">
+        <AlertCircle className="w-12 h-12 text-slate-600 mx-auto mb-3" />
+        <p className="text-slate-400">Unable to load dashboard</p>
+        <Button variant="ghost" className="mt-2 text-emerald-400" onClick={() => window.location.reload()}>Retry</Button>
+      </div>
+    </div>
+  )
+
+  const hasActivePackage = !!data.activePackage && !data.isPackageExpired
+  const pkg = data.activePackage
+  const dataUsedGB = (data.dataUsed / 1024).toFixed(1)
+  const dataLimitGB = data.dataLimit > 0 ? (data.dataLimit / 1024).toFixed(0) : "∞"
+  const okoaBalance = data.okoaBalance || 0
+
+  const getGreeting = () => {
+    const hour = new Date().getHours()
+    if (hour < 12) return "Good morning"
+    if (hour < 18) return "Good afternoon"
+    return "Good evening"
   }
 
-  const user = data?.user
-  const activePackage = user?.activePackage
-  const daysLeft = user?.packageExpiry ? Math.max(0, Math.ceil((new Date(user.packageExpiry).getTime() - Date.now()) / (1000 * 60 * 60 * 24))) : 0
-  const dataPercent = user && user.dataLimit > 0 ? (user.dataUsed / user.dataLimit) * 100 : 0
-  const dataUsedGB = user ? (user.dataUsed / 1024).toFixed(1) : "0"
-  const dataLimitGB = user ? (user.dataLimit / 1024).toFixed(1) : "0"
-
   return (
-    <div className="space-y-6">
-      <motion.div {...fadeIn}>
-        <h1 className="text-2xl font-bold text-white">Dashboard</h1>
-        <p className="text-slate-400 mt-1">Welcome back, {user?.name || "User"}</p>
+    <motion.div
+      variants={staggerContainer}
+      initial="hidden"
+      animate="show"
+      className="space-y-6"
+    >
+      {/* Welcome */}
+      <motion.div variants={staggerItem}>
+        <h1 className="text-2xl font-bold text-white">
+          {getGreeting()}, {data.name?.split(" ")[0] || "User"} 👋
+        </h1>
+        <p className="text-slate-400 mt-1">Here&apos;s your internet status overview</p>
       </motion.div>
 
       {/* Quick actions */}
-      <motion.div {...fadeIn} transition={{ delay: 0.05 }} className="grid grid-cols-3 gap-3">
-        <Link href="/client/packages"><Button className="w-full bg-emerald-500 hover:bg-emerald-600 text-white h-auto py-3 flex-col gap-1"><Package className="w-5 h-5" /><span className="text-xs">Buy Package</span></Button></Link>
-        <Link href="/client/okoa"><Button className="w-full bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 border border-amber-500/30 h-auto py-3 flex-col gap-1"><CreditCard className="w-5 h-5" /><span className="text-xs">OKOA Internet</span></Button></Link>
-        <Link href="/client/support"><Button className="w-full bg-[#1e293b] hover:bg-[#2d3a4d] text-white h-auto py-3 flex-col gap-1"><MessageSquare className="w-5 h-5" /><span className="text-xs">Support</span></Button></Link>
+      <motion.div variants={staggerItem} className="grid grid-cols-3 gap-3">
+        <Link href="/client/packages">
+          <Button className="w-full bg-emerald-500 hover:bg-emerald-600 text-white h-auto py-3 flex-col gap-1.5 rounded-xl shadow-lg shadow-emerald-500/20 hover:shadow-emerald-500/30 transition-all">
+            <Package className="w-5 h-5" />
+            <span className="text-xs font-medium">Buy Package</span>
+          </Button>
+        </Link>
+        <Link href="/client/okoa">
+          <Button className="w-full bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 border border-amber-500/30 h-auto py-3 flex-col gap-1.5 rounded-xl transition-all">
+            <CreditCard className="w-5 h-5" />
+            <span className="text-xs font-medium">OKOA Internet</span>
+          </Button>
+        </Link>
+        <Link href="/client/support">
+          <Button className="w-full bg-[#1e293b] hover:bg-[#2d3a4d] text-slate-300 border border-[#2d3a4d] h-auto py-3 flex-col gap-1.5 rounded-xl transition-all">
+            <MessageSquare className="w-5 h-5" />
+            <span className="text-xs font-medium">Support</span>
+          </Button>
+        </Link>
       </motion.div>
 
       {/* Active Package */}
-      <motion.div {...fadeIn} transition={{ delay: 0.1 }}>
-        <Card className="bg-[#111827] border-[#1e293b]">
-          <CardHeader className="pb-2"><CardTitle className="text-base text-white flex items-center gap-2"><Wifi className="w-4 h-4 text-emerald-500" />Active Package</CardTitle></CardHeader>
-          <CardContent>
-            {activePackage ? (
-              <>
-                <div className="flex items-center justify-between mb-3">
+      <motion.div variants={staggerItem}>
+        <Card className="bg-[#111827] border-[#1e293b] overflow-hidden">
+          {hasActivePackage ? (
+            <>
+              <div className="h-1 bg-gradient-to-r from-emerald-500 to-emerald-400" />
+              <CardHeader className="pb-2 pt-4">
+                <CardTitle className="text-base text-white flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="p-1.5 rounded-lg bg-emerald-500/15">
+                      <Wifi className="w-4 h-4 text-emerald-500" />
+                    </div>
+                    Active Package
+                  </div>
+                  <Badge className="bg-emerald-500/15 text-emerald-400 border-emerald-500/20 text-xs">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 mr-1.5 animate-pulse" />
+                    {data.connectionStatus === "connected" ? "Connected" : "Disconnected"}
+                  </Badge>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-center justify-between mb-4">
                   <div>
-                    <p className="text-xl font-bold text-emerald-400">{activePackage.name}</p>
-                    <p className="text-xs text-slate-400 flex items-center gap-1 mt-0.5"><Clock className="w-3 h-3" />{daysLeft} days remaining</p>
+                    <p className="text-xl font-bold text-emerald-400">{pkg.name}</p>
+                    <p className="text-xs text-slate-500 flex items-center gap-1 mt-0.5">
+                      <Clock className="w-3 h-3" />
+                      {data.daysRemaining} days remaining
+                    </p>
                   </div>
-                  <Badge className="bg-emerald-500/15 text-emerald-400 border-0">Active</Badge>
-                </div>
-                <div className="grid grid-cols-3 gap-3 mb-3">
-                  <div className="text-center p-2 bg-[#0b1220] rounded-lg"><ArrowDown className="w-4 h-4 text-emerald-500 mx-auto mb-1" /><p className="text-xs text-slate-400">Download</p><p className="text-sm font-bold text-white">{activePackage.speedDown} Mbps</p></div>
-                  <div className="text-center p-2 bg-[#0b1220] rounded-lg"><ArrowUp className="w-4 h-4 text-blue-500 mx-auto mb-1" /><p className="text-xs text-slate-400">Upload</p><p className="text-sm font-bold text-white">{activePackage.speedUp} Mbps</p></div>
-                  <div className="text-center p-2 bg-[#0b1220] rounded-lg"><Database className="w-4 h-4 text-amber-500 mx-auto mb-1" /><p className="text-xs text-slate-400">Data</p><p className="text-sm font-bold text-white">{activePackage.dataLimitMB === 0 ? "∞" : `${dataUsedGB}/${dataLimitGB} GB`}</p></div>
-                </div>
-                {user && user.dataLimit > 0 && (
-                  <div className="space-y-1">
-                    <div className="flex justify-between text-xs"><span className="text-slate-400">Data Used</span><span className="text-white">{Math.round(dataPercent)}%</span></div>
-                    <Progress value={dataPercent} className="h-2 bg-[#1e293b]" />
+                  <div className="text-right">
+                    <p className="text-xs text-slate-500">Speed</p>
+                    <p className="text-sm font-semibold text-white">{pkg.speed || `${pkg.speedDown}Mbps`}</p>
                   </div>
-                )}
-              </>
-            ) : (
-              <div className="text-center py-4">
-                <p className="text-slate-400 text-sm">No active package</p>
-                <Link href="/client/packages"><Button className="mt-3 bg-emerald-500 hover:bg-emerald-600 text-white" size="sm"><Package className="w-4 h-4 mr-2" />Buy a Package</Button></Link>
-              </div>
-            )}
-          </CardContent>
+                </div>
+
+                <div className="grid grid-cols-3 gap-3 mb-4">
+                  <div className="text-center p-2.5 bg-[#0b1220] rounded-xl border border-[#1e293b]/50">
+                    <ArrowDown className="w-4 h-4 text-emerald-500 mx-auto mb-1" />
+                    <p className="text-[10px] text-slate-500 uppercase tracking-wider">Download</p>
+                    <p className="text-sm font-bold text-white">{pkg.speedDown} Mbps</p>
+                  </div>
+                  <div className="text-center p-2.5 bg-[#0b1220] rounded-xl border border-[#1e293b]/50">
+                    <ArrowUp className="w-4 h-4 text-sky-500 mx-auto mb-1" />
+                    <p className="text-[10px] text-slate-500 uppercase tracking-wider">Upload</p>
+                    <p className="text-sm font-bold text-white">{pkg.speedUp} Mbps</p>
+                  </div>
+                  <div className="text-center p-2.5 bg-[#0b1220] rounded-xl border border-[#1e293b]/50">
+                    <Database className="w-4 h-4 text-amber-500 mx-auto mb-1" />
+                    <p className="text-[10px] text-slate-500 uppercase tracking-wider">Data</p>
+                    <p className="text-sm font-bold text-white">{dataUsedGB}/{dataLimitGB} GB</p>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <div className="flex justify-between text-xs">
+                    <span className="text-slate-500">Data Used</span>
+                    <span className="text-white font-medium">{Math.round(data.dataUsagePercent)}%</span>
+                  </div>
+                  <div className="relative">
+                    <Progress value={data.dataUsagePercent} className="h-2.5 bg-[#1e293b]" />
+                    {data.dataUsagePercent > 80 && (
+                      <p className="text-[10px] text-amber-400 mt-1 flex items-center gap-1">
+                        <AlertCircle className="w-3 h-3" />
+                        You&apos;ve used most of your data
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </CardContent>
+            </>
+          ) : (
+            <>
+              <div className="h-1 bg-gradient-to-r from-slate-600 to-slate-500" />
+              <CardContent className="py-8 text-center">
+                <div className="w-14 h-14 rounded-2xl bg-[#1e293b] flex items-center justify-center mx-auto mb-4">
+                  <Wifi className="w-7 h-7 text-slate-500" />
+                </div>
+                <p className="text-white font-medium">No Active Package</p>
+                <p className="text-sm text-slate-500 mt-1">Purchase a package to get connected</p>
+                <Link href="/client/packages">
+                  <Button className="mt-4 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl">
+                    <Package className="w-4 h-4 mr-2" />Browse Packages
+                  </Button>
+                </Link>
+              </CardContent>
+            </>
+          )}
         </Card>
       </motion.div>
 
-      {/* OKOA Balance */}
-      {user && user.okoaBalance > 0 && (
-        <motion.div {...fadeIn} transition={{ delay: 0.15 }}>
-          <Card className="bg-[#111827] border-amber-500/30">
+      {/* OKOA Balance Card */}
+      {okoaBalance > 0 && (
+        <motion.div variants={staggerItem}>
+          <Card className="bg-[#111827] border-amber-500/20 overflow-hidden">
+            <div className="h-1 bg-gradient-to-r from-amber-500 to-amber-400" />
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-amber-500/15"><CreditCard className="w-5 h-5 text-amber-400" /></div>
-                  <div><p className="text-sm text-slate-400">OKOA Balance</p><p className="text-lg font-bold text-amber-400">KES {user.okoaBalance.toLocaleString()}</p></div>
+                  <div className="p-2.5 rounded-xl bg-amber-500/15">
+                    <CreditCard className="w-5 h-5 text-amber-400" />
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500">OKOA Balance</p>
+                    <p className="text-xl font-bold text-amber-400">KES {okoaBalance.toLocaleString()}</p>
+                  </div>
                 </div>
-                <Link href="/client/okoa"><Button variant="ghost" size="sm" className="text-amber-400 hover:text-amber-300">View Details</Button></Link>
+                <Link href="/client/okoa">
+                  <Button variant="ghost" size="sm" className="text-amber-400 hover:text-amber-300 hover:bg-amber-500/10 gap-1">
+                    View Details <ExternalLink className="w-3 h-3" />
+                  </Button>
+                </Link>
               </div>
-              <p className="text-xs text-slate-500 mt-2">This amount will be deducted from your next package purchase.</p>
+              <p className="text-xs text-slate-600 mt-2">This amount will be deducted from your next package purchase.</p>
             </CardContent>
           </Card>
         </motion.div>
       )}
 
-      {/* Data Usage Chart */}
-      <motion.div {...fadeIn} transition={{ delay: 0.2 }}>
+      {/* Weekly Data Usage chart */}
+      <motion.div variants={staggerItem}>
         <Card className="bg-[#111827] border-[#1e293b]">
-          <CardHeader className="pb-2"><CardTitle className="text-base text-white flex items-center gap-2"><Zap className="w-4 h-4 text-emerald-500" />Weekly Data Usage</CardTitle></CardHeader>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base text-white flex items-center gap-2">
+              <div className="p-1.5 rounded-lg bg-emerald-500/15">
+                <TrendingUp className="w-4 h-4 text-emerald-500" />
+              </div>
+              Weekly Data Usage
+            </CardTitle>
+          </CardHeader>
           <CardContent>
             <div className="h-48">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={usageData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                  <XAxis dataKey="day" stroke="#64748b" fontSize={12} />
-                  <YAxis stroke="#64748b" fontSize={12} tickFormatter={(v) => `${v}MB`} />
-                  <Tooltip contentStyle={{ backgroundColor: "#111827", border: "1px solid #1e293b", borderRadius: "8px", color: "#e2e8f0" }} formatter={(value: number) => [`${value} MB`, "Usage"]} />
-                  <Bar dataKey="usage" fill="#10b981" radius={[4, 4, 0, 0]} />
+                <BarChart data={data.weeklyUsage || []}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                  <XAxis dataKey="day" stroke="#64748b" fontSize={11} tickLine={false} axisLine={false} />
+                  <YAxis stroke="#64748b" fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v) => `${v}MB`} />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: "#111827",
+                      border: "1px solid #1e293b",
+                      borderRadius: "10px",
+                      color: "#e2e8f0",
+                      fontSize: "12px",
+                    }}
+                    formatter={(value: number) => [`${value} MB`, "Usage"]}
+                    cursor={{ fill: "rgba(16, 185, 129, 0.08)" }}
+                  />
+                  <Bar dataKey="usage" fill="#10b981" radius={[6, 6, 0, 0]} maxBarSize={32} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -175,31 +282,70 @@ export default function ClientDashboard() {
       </motion.div>
 
       {/* Recent Transactions */}
-      <motion.div {...fadeIn} transition={{ delay: 0.25 }}>
+      <motion.div variants={staggerItem}>
         <Card className="bg-[#111827] border-[#1e293b]">
-          <CardHeader className="pb-2"><CardTitle className="text-base text-white">Recent Transactions</CardTitle></CardHeader>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base text-white flex items-center justify-between">
+              <span className="flex items-center gap-2">
+                <div className="p-1.5 rounded-lg bg-emerald-500/15">
+                  <Zap className="w-4 h-4 text-emerald-500" />
+                </div>
+                Recent Transactions
+              </span>
+              <Link href="/client/transactions">
+                <Button variant="ghost" size="sm" className="text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10 text-xs gap-1">
+                  View All <ExternalLink className="w-3 h-3" />
+                </Button>
+              </Link>
+            </CardTitle>
+          </CardHeader>
           <CardContent>
-            {data?.recentTransactions && data.recentTransactions.length > 0 ? (
-              <div className="space-y-3">
-                {data.recentTransactions.map((tx) => (
-                  <div key={tx.id} className="flex items-center justify-between py-2">
+            {data.recentTransactions?.length > 0 ? (
+              <div className="space-y-1">
+                {data.recentTransactions.map((tx: any, i: number) => (
+                  <motion.div
+                    key={tx.id}
+                    initial={{ opacity: 0, x: -12 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: i * 0.05 }}
+                    className="flex items-center justify-between py-2.5 px-2 rounded-lg hover:bg-white/[0.02] transition-colors"
+                  >
                     <div className="flex items-center gap-3">
-                      <div className={`w-8 h-8 rounded-full flex items-center justify-center ${tx.type === "purchase" ? "bg-emerald-500/15" : tx.type === "okoa" ? "bg-amber-500/15" : "bg-blue-500/15"}`}>
-                        {tx.type === "purchase" ? <Package className="w-4 h-4 text-emerald-400" /> : tx.type === "okoa" ? <CreditCard className="w-4 h-4 text-amber-400" /> : <Wifi className="w-4 h-4 text-blue-400" />}
+                      <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${
+                        tx.type === "purchase" ? "bg-emerald-500/15" :
+                        tx.type === "okoa" ? "bg-amber-500/15" :
+                        tx.type === "repayment" ? "bg-sky-500/15" :
+                        "bg-purple-500/15"
+                      }`}>
+                        {tx.type === "purchase" ? <Package className="w-4 h-4 text-emerald-400" /> :
+                         tx.type === "okoa" ? <CreditCard className="w-4 h-4 text-amber-400" /> :
+                         tx.type === "repayment" ? <ArrowUp className="w-4 h-4 text-sky-400" /> :
+                         <Signal className="w-4 h-4 text-purple-400" />}
                       </div>
-                      <div><p className="text-sm text-white">{tx.description || tx.type}</p><p className="text-xs text-slate-500">{new Date(tx.createdAt).toLocaleDateString()}</p></div>
+                      <div>
+                        <p className="text-sm text-white">{tx.description || tx.type}</p>
+                        <p className="text-xs text-slate-500">
+                          {format(new Date(tx.createdAt), "MMM d, yyyy")}
+                        </p>
+                      </div>
                     </div>
-                    <p className={`text-sm font-medium ${tx.type === "topup" || tx.type === "repayment" ? "text-emerald-400" : "text-white"}`}>KES {tx.amount.toLocaleString()}</p>
-                  </div>
+                    <p className={`text-sm font-semibold ${
+                      tx.type === "topup" || tx.type === "repayment" ? "text-emerald-400" : "text-white"
+                    }`}>
+                      {tx.type === "topup" || tx.type === "repayment" ? "+" : "-"}KES {tx.amount.toLocaleString()}
+                    </p>
+                  </motion.div>
                 ))}
-                <Link href="/client/transactions"><Button variant="ghost" size="sm" className="w-full mt-2 text-emerald-400 hover:text-emerald-300">View All Transactions</Button></Link>
               </div>
             ) : (
-              <p className="text-slate-400 text-sm text-center py-4">No transactions yet</p>
+              <div className="text-center py-6">
+                <Zap className="w-8 h-8 text-slate-700 mx-auto mb-2" />
+                <p className="text-sm text-slate-500">No transactions yet</p>
+              </div>
             )}
           </CardContent>
         </Card>
       </motion.div>
-    </div>
+    </motion.div>
   )
 }

@@ -2,115 +2,70 @@ import { NextResponse } from "next/server"
 import { getServerSession } from "next-auth"
 import { authOptions } from "@/lib/auth"
 import { db } from "@/lib/db"
-import { getNotificationService } from "@/lib/notifications"
 
-export async function GET(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const session = await getServerSession(authOptions)
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }
-    const userRole = (session.user as any).role
-    if (userRole !== "member") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 })
-    }
+    if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    if ((session.user as any).role !== "member") return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
-    const memberId = (session.user as any).id
+    const userId = (session.user as any).id
     const { id } = await params
 
-    // Ensure ticket belongs to one of this member's clients
     const ticket = await db.ticket.findFirst({
-      where: { id, user: { memberId } },
+      where: { id, ispId: userId },
       include: {
-        user: { select: { id: true, name: true, email: true, phone: true } },
-        assignee: { select: { id: true, name: true, email: true } },
+        user: { select: { id: true, name: true, email: true } },
+        assignee: { select: { id: true, name: true } },
         responses: { orderBy: { createdAt: "asc" } },
       },
     })
-
-    if (!ticket) {
-      return NextResponse.json({ error: "Ticket not found" }, { status: 404 })
-    }
+    if (!ticket) return NextResponse.json({ error: "Ticket not found" }, { status: 404 })
 
     return NextResponse.json({ data: ticket })
-
   } catch (error) {
-    console.error("Member get ticket error:", error)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    console.error("Member ticket GET error:", error)
+    return NextResponse.json({ error: "Failed to fetch ticket" }, { status: 500 })
   }
 }
 
-export async function PUT(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function PUT(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const session = await getServerSession(authOptions)
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }
-    const userRole = (session.user as any).role
-    if (userRole !== "member") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 })
-    }
+    if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    if ((session.user as any).role !== "member") return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
-    const memberId = (session.user as any).id
-    const memberName = session.user.name || "ISP Support"
+    const userId = (session.user as any).id
     const { id } = await params
     const body = await request.json()
-    const { status, priority, assignedTo, response } = body
 
-    // Ensure ticket belongs to one of this member's clients
-    const existing = await db.ticket.findFirst({
-      where: { id, user: { memberId } },
-    })
-    if (!existing) {
-      return NextResponse.json({ error: "Ticket not found" }, { status: 404 })
-    }
+    // Verify this ticket belongs to this member's ISP
+    const existing = await db.ticket.findFirst({ where: { id, ispId: userId } })
+    if (!existing) return NextResponse.json({ error: "Ticket not found" }, { status: 404 })
 
-    const updateData: any = {}
-    if (status !== undefined) updateData.status = status
-    if (priority !== undefined) updateData.priority = priority
-    if (assignedTo !== undefined) updateData.assignedTo = assignedTo || null
-
-    // If a response is provided, add it
-    if (response) {
+    // Handle adding a response
+    if (body.response) {
       await db.ticketResponse.create({
         data: {
           ticketId: id,
-          userId: memberId,
-          userName: memberName,
-          message: response.trim(),
+          userId,
+          userName: session.user?.name || "ISP Support",
+          message: body.response,
         },
       })
     }
 
-    const ticket = await db.ticket.update({
-      where: { id },
-      data: updateData,
-      include: {
-        user: { select: { id: true, name: true, email: true } },
-        assignee: { select: { id: true, name: true, email: true } },
-      },
-    })
+    // Update ticket fields
+    const data: any = {}
+    if (body.status !== undefined) data.status = body.status.toLowerCase()
+    if (body.priority !== undefined) data.priority = body.priority.toLowerCase()
+    if (body.assignedTo !== undefined) data.assignedTo = body.assignedTo
+    if (body.category !== undefined) data.category = body.category
 
-    // Notify the client
-    if (status && status !== existing.status) {
-      getNotificationService().notify({
-        userId: existing.userId,
-        title: "Ticket Updated",
-        message: `Your ticket "${existing.subject}" has been updated to: ${status}`,
-        type: "info",
-      }).catch(err => console.error("Notification error:", err))
-    }
-
-    return NextResponse.json({ data: ticket, message: "Ticket updated successfully" })
-
+    const ticket = await db.ticket.update({ where: { id }, data })
+    return NextResponse.json({ data: ticket })
   } catch (error) {
-    console.error("Member update ticket error:", error)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    console.error("Member ticket PUT error:", error)
+    return NextResponse.json({ error: "Failed to update ticket" }, { status: 500 })
   }
 }

@@ -2,115 +2,82 @@ import { NextResponse } from "next/server"
 import { getServerSession } from "next-auth"
 import { authOptions } from "@/lib/auth"
 import { db } from "@/lib/db"
-import { hashPassword } from "@/lib/auth-helpers"
+import bcrypt from "bcryptjs"
 
 export async function GET() {
   try {
     const session = await getServerSession(authOptions)
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }
-    const userRole = (session.user as any).role
-    if (userRole !== "client") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 })
-    }
+    if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    if ((session.user as any).role !== "client") return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
-    const clientId = (session.user as any).id
-
-    const profile = await db.user.findUnique({
-      where: { id: clientId },
+    const userId = (session.user as any).id
+    const user = await db.user.findUnique({
+      where: { id: userId },
       select: {
-        id: true,
-        name: true,
-        email: true,
-        phone: true,
-        avatar: true,
-        role: true,
-        emailVerified: true,
-        phoneVerified: true,
-        connectionStatus: true,
-        okoaBalance: true,
-        okoaLimit: true,
-        okoaUsed: true,
-        packageExpiry: true,
-        dataUsed: true,
-        dataLimit: true,
-        createdAt: true,
-        activePackage: {
-          select: { id: true, name: true, speed: true, price: true, duration: true },
-        },
-        member: {
-          select: { id: true, name: true, businessName: true, phone: true, email: true },
-        },
+        id: true, name: true, email: true, phone: true,
+        status: true, okoaBalance: true, okoaLimit: true,
+        connectionStatus: true, avatar: true, createdAt: true,
+        member: { select: { id: true, name: true, businessName: true, phone: true } },
       },
     })
 
-    return NextResponse.json({ data: profile })
-
+    return NextResponse.json({ data: user })
   } catch (error) {
-    console.error("Client profile get error:", error)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    console.error("Client profile GET error:", error)
+    return NextResponse.json({ error: "Failed to fetch profile" }, { status: 500 })
   }
 }
 
 export async function PUT(request: Request) {
   try {
     const session = await getServerSession(authOptions)
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }
-    const userRole = (session.user as any).role
-    if (userRole !== "client") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 })
-    }
+    if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    if ((session.user as any).role !== "client") return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
-    const clientId = (session.user as any).id
+    const userId = (session.user as any).id
     const body = await request.json()
-    const { name, phone, currentPassword, newPassword } = body
-
-    const updateData: any = {}
-    if (name !== undefined) updateData.name = name.trim()
-    if (phone !== undefined) updateData.phone = phone?.trim() || null
 
     // Handle password change
-    if (currentPassword && newPassword) {
-      const user = await db.user.findUnique({ where: { id: clientId } })
-      if (!user?.password) {
-        return NextResponse.json({ error: "Cannot change password for OAuth accounts" }, { status: 400 })
+    if (body.currentPassword && body.newPassword) {
+      const user = await db.user.findUnique({ where: { id: userId } })
+      if (!user?.password) return NextResponse.json({ error: "No password set" }, { status: 400 })
+
+      const valid = await bcrypt.compare(body.currentPassword, user.password)
+      if (!valid) return NextResponse.json({ error: "Current password is incorrect" }, { status: 400 })
+
+      if (body.newPassword.length < 6) {
+        return NextResponse.json({ error: "New password must be at least 6 characters" }, { status: 400 })
       }
 
-      const bcrypt = await import("bcryptjs")
-      const isValid = await bcrypt.compare(currentPassword, user.password)
-      if (!isValid) {
-        return NextResponse.json({ error: "Current password is incorrect" }, { status: 400 })
-      }
+      const hashed = await bcrypt.hash(body.newPassword, 12)
+      await db.user.update({ where: { id: userId }, data: { password: hashed } })
 
-      if (newPassword.length < 8) {
-        return NextResponse.json({ error: "New password must be at least 8 characters" }, { status: 400 })
-      }
-
-      updateData.password = await hashPassword(newPassword)
+      return NextResponse.json({ data: { success: true, message: "Password updated" } })
     }
 
-    const profile = await db.user.update({
-      where: { id: clientId },
-      data: updateData,
+    // Handle profile update
+    const data: any = {}
+    if (body.name !== undefined) data.name = body.name
+    if (body.phone !== undefined) data.phone = body.phone
+    if (body.avatar !== undefined) data.avatar = body.avatar
+
+    if (Object.keys(data).length === 0) {
+      return NextResponse.json({ error: "No fields to update" }, { status: 400 })
+    }
+
+    const user = await db.user.update({
+      where: { id: userId },
+      data,
       select: {
-        id: true,
-        name: true,
-        email: true,
-        phone: true,
-        avatar: true,
-        emailVerified: true,
-        phoneVerified: true,
-        updatedAt: true,
+        id: true, name: true, email: true, phone: true,
+        status: true, okoaBalance: true, okoaLimit: true,
+        connectionStatus: true, avatar: true,
       },
     })
 
-    return NextResponse.json({ data: profile, message: "Profile updated successfully" })
-
+    return NextResponse.json({ data: user })
   } catch (error) {
-    console.error("Client profile update error:", error)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    console.error("Client profile PUT error:", error)
+    return NextResponse.json({ error: "Failed to update profile" }, { status: 500 })
   }
 }

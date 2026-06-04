@@ -3,59 +3,46 @@ import { getServerSession } from "next-auth"
 import { authOptions } from "@/lib/auth"
 import { db } from "@/lib/db"
 
-export async function GET(request: Request) {
+export async function GET() {
   try {
     const session = await getServerSession(authOptions)
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }
-    const userRole = (session.user as any).role
-    if (userRole !== "member") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 })
-    }
+    if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    if ((session.user as any).role !== "member") return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
-    const memberId = (session.user as any).id
-    const { searchParams } = new URL(request.url)
-    const page = parseInt(searchParams.get("page") || "1")
-    const limit = parseInt(searchParams.get("limit") || "20")
-    const skip = (page - 1) * limit
+    const userId = (session.user as any).id
 
-    // OKOA transactions for this member's clients
-    const where: any = {
-      type: { in: ["okoa", "repayment"] },
-      user: { memberId },
-    }
+    const okoaClients = await db.user.findMany({
+      where: { memberId: userId, role: "client", okoaUsed: { gt: 0 } },
+      select: {
+        id: true, name: true, email: true,
+        okoaBalance: true, okoaLimit: true, okoaUsed: true,
+        status: true, phone: true,
+      },
+    })
 
-    const [okoaTransactions, total] = await Promise.all([
-      db.transaction.findMany({
-        where,
-        skip,
-        take: limit,
-        orderBy: { createdAt: "desc" },
-        include: {
-          user: { select: { id: true, name: true, email: true, phone: true, okoaBalance: true, okoaLimit: true, okoaUsed: true } },
-        },
-      }),
-      db.transaction.count({ where }),
-    ])
+    const totalCredit = okoaClients.reduce((s, c) => s + c.okoaBalance, 0)
+    const totalLimit = okoaClients.reduce((s, c) => s + c.okoaLimit, 0)
+    const totalUsed = okoaClients.reduce((s, c) => s + c.okoaUsed, 0)
 
-    // OKOA summary stats
-    const totalOkoaDebt = await db.user.aggregate({
-      where: { memberId, role: "client" },
-      _sum: { okoaBalance: true, okoaUsed: true },
+    // Get recent OKOA transactions
+    const recentTransactions = await db.transaction.findMany({
+      where: { type: { in: ["okoa", "repayment"] }, user: { memberId: userId } },
+      orderBy: { createdAt: "desc" },
+      take: 20,
+      include: { user: { select: { name: true, email: true } } },
     })
 
     return NextResponse.json({
-      data: okoaTransactions,
-      stats: {
-        totalOkoaDebt: totalOkoaDebt._sum.okoaBalance || 0,
-        totalOkoaUsed: totalOkoaDebt._sum.okoaUsed || 0,
+      data: {
+        clients: okoaClients,
+        totalCredit,
+        totalLimit,
+        totalUsed,
+        recentTransactions,
       },
-      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
     })
-
   } catch (error) {
-    console.error("Member okoa list error:", error)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    console.error("Member okoa GET error:", error)
+    return NextResponse.json({ error: "Failed to fetch OKOA data" }, { status: 500 })
   }
 }

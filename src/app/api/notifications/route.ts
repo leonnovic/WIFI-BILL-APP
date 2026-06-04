@@ -1,54 +1,63 @@
-import { NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
 import { getServerSession } from "next-auth"
 import { authOptions } from "@/lib/auth"
-import { getNotificationService } from "@/lib/notifications"
+import { db } from "@/lib/db"
 
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions)
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }
+    if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
     const userId = (session.user as any).id
     const { searchParams } = new URL(request.url)
     const page = parseInt(searchParams.get("page") || "1")
     const limit = parseInt(searchParams.get("limit") || "20")
     const unreadOnly = searchParams.get("unread") === "true"
+    const skip = (page - 1) * limit
 
-    const notificationService = getNotificationService()
+    const where: any = { userId }
+    if (unreadOnly) where.isRead = false
 
-    if (unreadOnly) {
-      const notifications = await notificationService.getUnread(userId)
-      return NextResponse.json({ data: notifications })
-    }
+    const [notifications, total, unreadCount] = await Promise.all([
+      db.notification.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: limit,
+      }),
+      db.notification.count({ where }),
+      db.notification.count({ where: { userId, isRead: false } }),
+    ])
 
-    const result = await notificationService.getAll(userId, page, limit)
-    return NextResponse.json({ data: result })
-
+    return NextResponse.json({
+      data: notifications,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+      unreadCount,
+    })
   } catch (error) {
-    console.error("Notifications list error:", error)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    console.error("Notifications GET error:", error)
+    return NextResponse.json({ error: "Failed to fetch notifications" }, { status: 500 })
   }
 }
 
-export async function POST(request: Request) {
+export async function POST() {
   try {
     const session = await getServerSession(authOptions)
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }
+    if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
     const userId = (session.user as any).id
-    const notificationService = getNotificationService()
 
-    // Mark all as read
-    await notificationService.markAllAsRead(userId)
+    const result = await db.notification.updateMany({
+      where: { userId, isRead: false },
+      data: { isRead: true },
+    })
 
-    return NextResponse.json({ message: "All notifications marked as read" })
-
+    return NextResponse.json({ data: { success: true, markedAsRead: result.count } })
   } catch (error) {
-    console.error("Mark all read error:", error)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    console.error("Notifications POST error:", error)
+    return NextResponse.json({ error: "Failed to mark notifications as read" }, { status: 500 })
   }
 }

@@ -18,13 +18,8 @@ export const authOptions: NextAuthOptions = {
           throw new Error("Email and password are required")
         }
 
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-        if (!emailRegex.test(credentials.email)) {
-          throw new Error("Invalid email format")
-        }
-
         const user = await db.user.findUnique({
-          where: { email: credentials.email.toLowerCase().trim() }
+          where: { email: credentials.email }
         })
 
         if (!user) {
@@ -32,11 +27,11 @@ export const authOptions: NextAuthOptions = {
         }
 
         if (!user.isActive) {
-          throw new Error("Your account has been deactivated. Please contact support.")
+          throw new Error("Your account has been deactivated")
         }
 
         if (user.status === "suspended" || user.status === "SUSPENDED") {
-          throw new Error("Your account has been suspended. Please contact support.")
+          throw new Error("Your account has been suspended")
         }
 
         // Check role match if specified (case-insensitive)
@@ -44,9 +39,7 @@ export const authOptions: NextAuthOptions = {
           const userRole = user.role.toLowerCase()
           const requestedRole = credentials.role.toLowerCase()
           if (userRole !== requestedRole) {
-            throw new Error(
-              `This account is registered as '${user.role}', not '${credentials.role}'. Please use the correct login tab.`
-            )
+            throw new Error(`This account is registered as '${user.role}', not '${credentials.role}'. Please use the correct login tab.`)
           }
         }
 
@@ -69,51 +62,25 @@ export const authOptions: NextAuthOptions = {
           id: user.id,
           email: user.email,
           name: user.name,
-          role: user.role.toLowerCase(),
-          image: user.avatar,
+          role: user.role.toLowerCase(), // Normalize to lowercase
         }
       }
     }),
     GoogleProvider({
-      clientId: process.env.GOOGLE_CLIENT_ID || "",
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET || "",
+      clientId: process.env.GOOGLE_CLIENT_ID || "mock-id",
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET || "mock-secret",
     }),
-    // Apple provider placeholder - configure when Apple Developer credentials are available
-    // AppleProvider({
-    //   clientId: process.env.APPLE_CLIENT_ID || "",
-    //   clientSecret: process.env.APPLE_CLIENT_SECRET || "",
-    // }),
   ],
   session: {
     strategy: "jwt",
     maxAge: 30 * 24 * 60 * 60, // 30 days
   },
   callbacks: {
-    async jwt({ token, user, account }) {
+    async jwt({ token, user }) {
       if (user) {
         token.role = (user as any).role || "client"
         token.id = user.id
       }
-
-      // On subsequent calls, refresh user data from DB to catch role/status changes
-      if (token.id && !user) {
-        try {
-          const dbUser = await db.user.findUnique({
-            where: { id: token.id as string },
-            select: { role: true, isActive: true, status: true }
-          })
-          if (dbUser) {
-            if (!dbUser.isActive || dbUser.status === "suspended") {
-              // Force re-auth if account is deactivated
-              return { ...token, error: "AccountDeactivated" }
-            }
-            token.role = dbUser.role.toLowerCase()
-          }
-        } catch {
-          // If DB lookup fails, keep existing token data
-        }
-      }
-
       return token
     },
     async session({ session, token }) {
@@ -121,53 +88,29 @@ export const authOptions: NextAuthOptions = {
         (session.user as any).role = token.role
         ;(session.user as any).id = token.id
       }
-
-      // Propagate error to client
-      if ((token as any).error) {
-        (session as any).error = (token as any).error
-      }
-
       return session
     },
-    async signIn({ user, account, profile }) {
+    async signIn({ user, account }) {
       if (account?.provider === "google") {
-        try {
-          const existingUser = await db.user.findUnique({
-            where: { email: user.email! }
-          })
-
-          if (!existingUser) {
-            // Auto-create user as "client" for Google OAuth
-            await db.user.create({
-              data: {
-                email: user.email!,
-                name: user.name || "",
-                avatar: user.image || "",
-                role: "client",
-                emailVerified: true,
-                phoneVerified: false,
-                isActive: true,
-                status: "active",
-              }
-            })
-          } else {
-            // Update avatar if changed
-            if (user.image && existingUser.avatar !== user.image) {
-              await db.user.update({
-                where: { id: existingUser.id },
-                data: { avatar: user.image, emailVerified: true }
-              })
+        // Auto-create or update user from Google OAuth
+        const existingUser = await db.user.findUnique({
+          where: { email: user.email! }
+        })
+        if (!existingUser) {
+          await db.user.create({
+            data: {
+              email: user.email!,
+              name: user.name || "",
+              avatar: user.image || "",
+              role: "client",
+              emailVerified: true,
+              phoneVerified: false,
+              isActive: true,
+              status: "active",
             }
-          }
-        } catch (error) {
-          console.error("Google sign-in error:", error)
-          throw new Error("Failed to process Google sign-in. Please try again.")
+          })
         }
       }
-
-      // Apple provider placeholder
-      // if (account?.provider === "apple") { ... }
-
       return true
     }
   },
@@ -176,5 +119,5 @@ export const authOptions: NextAuthOptions = {
     error: "/login",
   },
   secret: process.env.NEXTAUTH_SECRET,
-  debug: process.env.NODE_ENV === "development",
+  debug: false,
 }

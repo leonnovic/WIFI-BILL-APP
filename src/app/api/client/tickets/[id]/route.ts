@@ -2,118 +2,71 @@ import { NextResponse } from "next/server"
 import { getServerSession } from "next-auth"
 import { authOptions } from "@/lib/auth"
 import { db } from "@/lib/db"
-import { getNotificationService } from "@/lib/notifications"
 
-export async function GET(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const session = await getServerSession(authOptions)
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }
-    const userRole = (session.user as any).role
-    if (userRole !== "client") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 })
-    }
+    if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    if ((session.user as any).role !== "client") return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
-    const clientId = (session.user as any).id
+    const userId = (session.user as any).id
     const { id } = await params
 
-    // Ensure ticket belongs to this client
     const ticket = await db.ticket.findFirst({
-      where: { id, userId: clientId },
+      where: { id, userId },
       include: {
-        assignee: { select: { id: true, name: true, email: true } },
+        assignee: { select: { id: true, name: true } },
         responses: { orderBy: { createdAt: "asc" } },
       },
     })
-
-    if (!ticket) {
-      return NextResponse.json({ error: "Ticket not found" }, { status: 404 })
-    }
+    if (!ticket) return NextResponse.json({ error: "Ticket not found" }, { status: 404 })
 
     return NextResponse.json({ data: ticket })
-
   } catch (error) {
-    console.error("Client get ticket error:", error)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    console.error("Client ticket GET error:", error)
+    return NextResponse.json({ error: "Failed to fetch ticket" }, { status: 500 })
   }
 }
 
-export async function PUT(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const session = await getServerSession(authOptions)
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }
-    const userRole = (session.user as any).role
-    if (userRole !== "client") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 })
-    }
+    if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    if ((session.user as any).role !== "client") return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
-    const clientId = (session.user as any).id
-    const clientName = session.user.name || "Client"
+    const userId = (session.user as any).id
     const { id } = await params
     const body = await request.json()
-    const { response } = body
 
-    if (!response) {
-      return NextResponse.json({ error: "Response message is required" }, { status: 400 })
-    }
+    // Verify this ticket belongs to this client
+    const existing = await db.ticket.findFirst({ where: { id, userId } })
+    if (!existing) return NextResponse.json({ error: "Ticket not found" }, { status: 404 })
 
-    // Ensure ticket belongs to this client
-    const ticket = await db.ticket.findFirst({
-      where: { id, userId: clientId },
-    })
-    if (!ticket) {
-      return NextResponse.json({ error: "Ticket not found" }, { status: 404 })
-    }
-
-    // Add response
-    const ticketResponse = await db.ticketResponse.create({
-      data: {
-        ticketId: id,
-        userId: clientId,
-        userName: clientName,
-        message: response.trim(),
-      },
-    })
-
-    // If ticket was closed, reopen it
-    if (ticket.status === "resolved" || ticket.status === "closed") {
-      await db.ticket.update({
-        where: { id },
-        data: { status: "open" },
+    // Add a response to the ticket
+    if (body.message) {
+      const response = await db.ticketResponse.create({
+        data: {
+          ticketId: id,
+          userId,
+          userName: session.user?.name || "Client",
+          message: body.message,
+        },
       })
+      return NextResponse.json({ data: response }, { status: 201 })
     }
 
-    // Notify ISP member if assigned
-    if (ticket.assignedTo) {
-      getNotificationService().notify({
-        userId: ticket.assignedTo,
-        title: "Ticket Response",
-        message: `Client responded to ticket "${ticket.subject}"`,
-        type: "info",
-      }).catch(err => console.error("Notification error:", err))
-    } else if (ticket.ispId) {
-      // Notify the ISP
-      getNotificationService().notify({
-        userId: ticket.ispId,
-        title: "Ticket Response",
-        message: `Client responded to ticket "${ticket.subject}"`,
-        type: "info",
-      }).catch(err => console.error("Notification error:", err))
+    // Allow client to close their own ticket
+    if (body.status === "closed") {
+      const ticket = await db.ticket.update({
+        where: { id },
+        data: { status: "closed" },
+      })
+      return NextResponse.json({ data: ticket })
     }
 
-    return NextResponse.json({ data: ticketResponse, message: "Response added successfully" })
-
+    return NextResponse.json({ error: "No action specified" }, { status: 400 })
   } catch (error) {
-    console.error("Client ticket response error:", error)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    console.error("Client ticket POST error:", error)
+    return NextResponse.json({ error: "Failed to update ticket" }, { status: 500 })
   }
 }

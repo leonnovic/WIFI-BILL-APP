@@ -6,41 +6,35 @@ import { db } from "@/lib/db"
 export async function GET() {
   try {
     const session = await getServerSession(authOptions)
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }
-    const userRole = (session.user as any).role
-    if (userRole !== "client") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 })
-    }
+    if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    if ((session.user as any).role !== "client") return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
-    const clientId = (session.user as any).id
+    const userId = (session.user as any).id
 
-    // Get the client's member/ISP
-    const client = await db.user.findUnique({
-      where: { id: clientId },
-      select: { memberId: true },
+    const user = await db.user.findUnique({
+      where: { id: userId },
+      select: { memberId: true, activePackageId: true },
     })
 
-    if (!client?.memberId) {
-      // If no member assigned, show all active packages
-      const packages = await db.package.findMany({
+    let packages
+    if (!user?.memberId) {
+      packages = await db.package.findMany({
         where: { isActive: true },
         orderBy: { price: "asc" },
       })
-      return NextResponse.json({ data: packages })
+    } else {
+      packages = await db.package.findMany({
+        where: { ispId: user.memberId, isActive: true },
+        orderBy: { price: "asc" },
+      })
     }
 
-    // Show packages from the client's ISP
-    const packages = await db.package.findMany({
-      where: { ispId: client.memberId, isActive: true },
-      orderBy: { price: "asc" },
+    return NextResponse.json({
+      data: packages,
+      activePackageId: user?.activePackageId || null,
     })
-
-    return NextResponse.json({ data: packages })
-
   } catch (error) {
-    console.error("Client packages error:", error)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    console.error("Client packages GET error:", error)
+    return NextResponse.json({ error: "Failed to fetch packages" }, { status: 500 })
   }
 }

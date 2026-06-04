@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import { getServerSession } from "next-auth"
 import { authOptions } from "@/lib/auth"
-import { getNotificationService } from "@/lib/notifications"
+import { db } from "@/lib/db"
 
 export async function PUT(
   request: Request,
@@ -13,16 +13,26 @@ export async function PUT(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
+    const userId = (session.user as any).id
     const { id } = await params
-    const notificationService = getNotificationService()
 
-    // Mark this notification as read
-    const notification = await notificationService.markAsRead(id)
+    // Verify this notification belongs to the current user
+    const notification = await db.notification.findFirst({
+      where: { id, userId },
+    })
 
-    return NextResponse.json({ data: notification, message: "Notification marked as read" })
+    if (!notification) {
+      return NextResponse.json({ error: "Notification not found" }, { status: 404 })
+    }
 
+    const updated = await db.notification.update({
+      where: { id },
+      data: { isRead: true },
+    })
+
+    return NextResponse.json({ data: updated })
   } catch (error) {
     console.error("Mark notification read error:", error)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    return NextResponse.json({ error: "Failed to mark notification as read" }, { status: 500 })
   }
 }

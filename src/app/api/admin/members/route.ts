@@ -1,26 +1,23 @@
-import { NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
 import { getServerSession } from "next-auth"
 import { authOptions } from "@/lib/auth"
 import { db } from "@/lib/db"
 
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions)
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }
-    const userRole = (session.user as any).role
-    if (userRole !== "admin") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 })
-    }
+    if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    if ((session.user as any).role !== "admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
     const { searchParams } = new URL(request.url)
+    const status = searchParams.get("status")
+    const search = searchParams.get("search")
     const page = parseInt(searchParams.get("page") || "1")
     const limit = parseInt(searchParams.get("limit") || "20")
-    const search = searchParams.get("search") || ""
     const skip = (page - 1) * limit
 
     const where: any = { role: "member" }
+    if (status) where.status = status.toLowerCase()
     if (search) {
       where.OR = [
         { name: { contains: search } },
@@ -36,31 +33,17 @@ export async function GET(request: Request) {
         take: limit,
         orderBy: { createdAt: "desc" },
         select: {
-          id: true,
-          email: true,
-          name: true,
-          phone: true,
-          isActive: true,
-          status: true,
-          avatar: true,
-          businessName: true,
-          businessRegNo: true,
-          businessAddress: true,
-          kraPin: true,
-          createdAt: true,
-          _count: { select: { clients: true, ispPackages: true, routers: true } },
+          id: true, name: true, email: true, businessName: true,
+          kraPin: true, status: true, phone: true, createdAt: true,
+          _count: { select: { clients: true, routers: true, ispPackages: true } },
         },
       }),
       db.user.count({ where }),
     ])
 
-    return NextResponse.json({
-      data: members,
-      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
-    })
-
+    return NextResponse.json({ data: members, total, page, limit, totalPages: Math.ceil(total / limit) })
   } catch (error) {
-    console.error("Admin members list error:", error)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    console.error("Admin members GET error:", error)
+    return NextResponse.json({ error: "Failed to fetch members" }, { status: 500 })
   }
 }

@@ -1,185 +1,98 @@
-import { NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
 import { getServerSession } from "next-auth"
 import { authOptions } from "@/lib/auth"
 import { db } from "@/lib/db"
-import { hashPassword } from "@/lib/auth-helpers"
+import bcrypt from "bcryptjs"
 
-export async function GET(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const session = await getServerSession(authOptions)
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }
-    const userRole = (session.user as any).role
-    if (userRole !== "admin") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 })
-    }
+    if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    if ((session.user as any).role !== "admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
     const { id } = await params
-
     const user = await db.user.findUnique({
       where: { id },
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        phone: true,
-        role: true,
-        isActive: true,
-        status: true,
-        emailVerified: true,
-        phoneVerified: true,
-        avatar: true,
-        businessName: true,
-        businessRegNo: true,
-        businessAddress: true,
-        kraPin: true,
-        memberId: true,
-        okoaBalance: true,
-        okoaLimit: true,
-        okoaUsed: true,
-        activePackageId: true,
-        packageExpiry: true,
-        dataUsed: true,
-        dataLimit: true,
-        connectionStatus: true,
-        createdAt: true,
-        updatedAt: true,
-        _count: {
-          select: {
-            clients: true,
-            transactions: true,
-            tickets: true,
-            routers: true,
-            ispPackages: true,
-          },
-        },
-        activePackage: { select: { id: true, name: true, speed: true, price: true } },
-        member: { select: { id: true, name: true, email: true, businessName: true } },
+      include: {
+        clients: { select: { id: true, name: true, email: true, status: true, okoaBalance: true } },
+        activePackage: { select: { id: true, name: true, price: true, speed: true } },
+        _count: { select: { transactions: true, routers: true, tickets: true } },
       },
     })
+    if (!user) return NextResponse.json({ error: "User not found" }, { status: 404 })
 
-    if (!user) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 })
-    }
-
-    return NextResponse.json({ data: user })
-
+    // Remove password from response
+    const { password, ...safeUser } = user
+    return NextResponse.json({ data: safeUser })
   } catch (error) {
-    console.error("Admin get user error:", error)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    console.error("Admin user GET error:", error)
+    return NextResponse.json({ error: "Failed to fetch user" }, { status: 500 })
   }
 }
 
-export async function PUT(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function PUT(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const session = await getServerSession(authOptions)
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }
-    const userRole = (session.user as any).role
-    if (userRole !== "admin") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 })
-    }
+    if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    if ((session.user as any).role !== "admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
     const { id } = await params
     const body = await request.json()
-    const { name, email, phone, role, status, isActive, businessName, businessRegNo, businessAddress, kraPin, memberId, password, okoaLimit } = body
 
     // Verify user exists
     const existing = await db.user.findUnique({ where: { id } })
-    if (!existing) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 })
+    if (!existing) return NextResponse.json({ error: "User not found" }, { status: 404 })
+
+    // Build safe update data
+    const data: any = {}
+    if (body.name !== undefined) data.name = body.name
+    if (body.email !== undefined) data.email = body.email
+    if (body.role !== undefined) data.role = body.role.toLowerCase()
+    if (body.status !== undefined) data.status = body.status.toLowerCase()
+    if (body.phone !== undefined) data.phone = body.phone
+    if (body.businessName !== undefined) data.businessName = body.businessName
+    if (body.businessRegNo !== undefined) data.businessRegNo = body.businessRegNo
+    if (body.businessAddress !== undefined) data.businessAddress = body.businessAddress
+    if (body.kraPin !== undefined) data.kraPin = body.kraPin
+    if (body.okoaBalance !== undefined) data.okoaBalance = parseFloat(body.okoaBalance)
+    if (body.okoaLimit !== undefined) data.okoaLimit = parseFloat(body.okoaLimit)
+    if (body.isActive !== undefined) data.isActive = body.isActive
+    if (body.memberId !== undefined) data.memberId = body.memberId
+
+    // Password update
+    if (body.password) {
+      data.password = await bcrypt.hash(body.password, 12)
     }
 
-    // If email is changing, check for duplicates
-    if (email && email.toLowerCase() !== existing.email) {
-      const duplicate = await db.user.findUnique({ where: { email: email.toLowerCase().trim() } })
-      if (duplicate) {
-        return NextResponse.json({ error: "Email already in use" }, { status: 409 })
-      }
-    }
-
-    // Build update data
-    const updateData: any = {}
-    if (name !== undefined) updateData.name = name.trim()
-    if (email !== undefined) updateData.email = email.toLowerCase().trim()
-    if (phone !== undefined) updateData.phone = phone?.trim() || null
-    if (role !== undefined) updateData.role = role
-    if (status !== undefined) updateData.status = status
-    if (isActive !== undefined) updateData.isActive = isActive
-    if (businessName !== undefined) updateData.businessName = businessName?.trim() || null
-    if (businessRegNo !== undefined) updateData.businessRegNo = businessRegNo?.trim() || null
-    if (businessAddress !== undefined) updateData.businessAddress = businessAddress?.trim() || null
-    if (kraPin !== undefined) updateData.kraPin = kraPin?.trim() || null
-    if (memberId !== undefined) updateData.memberId = memberId || null
-    if (okoaLimit !== undefined) updateData.okoaLimit = parseFloat(okoaLimit)
-    if (password) {
-      updateData.password = await hashPassword(password)
-    }
-
-    const user = await db.user.update({
-      where: { id },
-      data: updateData,
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        phone: true,
-        role: true,
-        isActive: true,
-        status: true,
-        businessName: true,
-        okoaLimit: true,
-        updatedAt: true,
-      },
-    })
-
-    return NextResponse.json({ data: user, message: "User updated successfully" })
-
+    const user = await db.user.update({ where: { id }, data })
+    const { password, ...safeUser } = user
+    return NextResponse.json({ data: safeUser })
   } catch (error) {
-    console.error("Admin update user error:", error)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    console.error("Admin user PUT error:", error)
+    return NextResponse.json({ error: "Failed to update user" }, { status: 500 })
   }
 }
 
-export async function DELETE(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function DELETE(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const session = await getServerSession(authOptions)
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }
-    const userRole = (session.user as any).role
-    if (userRole !== "admin") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 })
-    }
+    if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    if ((session.user as any).role !== "admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
     const { id } = await params
 
-    const existing = await db.user.findUnique({ where: { id } })
-    if (!existing) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 })
+    // Prevent deleting self
+    if (id === (session.user as any).id) {
+      return NextResponse.json({ error: "Cannot delete your own account" }, { status: 400 })
     }
 
-    // Soft delete
-    await db.user.update({
-      where: { id },
-      data: { isActive: false, status: "inactive" },
-    })
+    const existing = await db.user.findUnique({ where: { id } })
+    if (!existing) return NextResponse.json({ error: "User not found" }, { status: 404 })
 
-    return NextResponse.json({ data: null, message: "User deactivated successfully" })
-
+    await db.user.delete({ where: { id } })
+    return NextResponse.json({ data: { success: true } })
   } catch (error) {
-    console.error("Admin delete user error:", error)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    console.error("Admin user DELETE error:", error)
+    return NextResponse.json({ error: "Failed to delete user" }, { status: 500 })
   }
 }

@@ -7,79 +7,67 @@ import { getNotificationService } from "@/lib/notifications"
 export async function POST(request: Request) {
   try {
     const session = await getServerSession(authOptions)
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }
-    const userRole = (session.user as any).role
-    if (userRole !== "member") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 })
-    }
+    if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    if ((session.user as any).role !== "member") return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
-    const memberId = (session.user as any).id
-    const body = await request.json()
-    const { clientId, amount, mpesaCode } = body
+    const userId = (session.user as any).id
+    const { clientId, amount } = await request.json()
 
-    if (!clientId || !amount) {
-      return NextResponse.json({ error: "Client ID and amount are required" }, { status: 400 })
-    }
+    if (!clientId || !amount) return NextResponse.json({ error: "Client ID and amount are required" }, { status: 400 })
+    if (amount <= 0) return NextResponse.json({ error: "Amount must be positive" }, { status: 400 })
 
-    const repayAmount = parseFloat(amount)
-    if (repayAmount <= 0) {
-      return NextResponse.json({ error: "Amount must be greater than 0" }, { status: 400 })
-    }
-
-    // Ensure client belongs to this member
+    // Verify this client belongs to this member
     const client = await db.user.findFirst({
-      where: { id: clientId, memberId, role: "client" },
+      where: { id: clientId, memberId: userId, role: "client" },
     })
-    if (!client) {
-      return NextResponse.json({ error: "Client not found" }, { status: 404 })
-    }
+    if (!client) return NextResponse.json({ error: "Client not found" }, { status: 404 })
 
     if (client.okoaBalance <= 0) {
-      return NextResponse.json({ error: "Client has no OKOA debt" }, { status: 400 })
+      return NextResponse.json({ error: "Client has no outstanding OKOA balance" }, { status: 400 })
     }
 
-    // Calculate repayment amount (cannot exceed debt)
-    const actualRepay = Math.min(repayAmount, client.okoaBalance)
+    const repayAmount = Math.min(amount, client.okoaBalance)
 
     // Update client OKOA balance
     await db.user.update({
       where: { id: clientId },
       data: {
-        okoaBalance: { decrement: actualRepay },
+        okoaBalance: client.okoaBalance - repayAmount,
       },
     })
 
     // Create repayment transaction
-    const transaction = await db.transaction.create({
+    await db.transaction.create({
       data: {
         userId: clientId,
-        amount: actualRepay,
         type: "repayment",
+        amount: repayAmount,
         status: "completed",
-        mpesaCode: mpesaCode || null,
-        mpesaPhone: client.phone,
-        description: `OKOA repayment: KES ${actualRepay}`,
+        description: "OKOA Repayment - Processed by ISP",
       },
     })
 
     // Notify client
-    getNotificationService().notify({
-      userId: clientId,
-      title: "OKOA Repayment Received",
-      message: `KES ${actualRepay} received towards your OKOA debt. Remaining: KES ${client.okoaBalance - actualRepay}`,
-      type: "success",
-      sendSMS: true,
-    }).catch(err => console.error("Notification error:", err))
+    try {
+      await getNotificationService().notify({
+        userId: clientId,
+        title: "OKOA Repayment Processed",
+        message: `Your OKOA repayment of KES ${repayAmount} has been processed. Remaining balance: KES ${client.okoaBalance - repayAmount}`,
+        type: "success",
+      })
+    } catch (e) {
+      console.error("Failed to notify client:", e)
+    }
 
     return NextResponse.json({
-      data: { transaction, remainingDebt: client.okoaBalance - actualRepay },
-      message: "OKOA repayment processed successfully",
+      data: {
+        success: true,
+        repaid: repayAmount,
+        remainingBalance: client.okoaBalance - repayAmount,
+      },
     })
-
   } catch (error) {
     console.error("Member okoa repay error:", error)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    return NextResponse.json({ error: "Failed to process repayment" }, { status: 500 })
   }
 }

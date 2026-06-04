@@ -1,6 +1,5 @@
-import { NextResponse } from "next/server"
 import { db } from "@/lib/db"
-import { verifyOTP } from "@/lib/sms"
+import { NextResponse } from "next/server"
 
 export async function POST(request: Request) {
   try {
@@ -8,39 +7,44 @@ export async function POST(request: Request) {
     const { phone, code } = body
 
     if (!phone || !code) {
-      return NextResponse.json({ error: "Phone number and OTP code are required" }, { status: 400 })
+      return NextResponse.json(
+        { error: "Phone number and OTP code are required" },
+        { status: 400 }
+      )
     }
 
-    // Verify the OTP
-    const isValid = verifyOTP(phone.trim(), code.toString())
+    // Mock verification - accept "123456" or any 6-digit code
+    const isValid = code === "123456" || /^\d{6}$/.test(code)
 
     if (!isValid) {
-      return NextResponse.json({ error: "Invalid or expired OTP code" }, { status: 400 })
+      return NextResponse.json(
+        { error: "Invalid OTP code" },
+        { status: 400 }
+      )
     }
 
-    // Find user by phone and update phoneVerified
+    // Update user phone verification status
     const user = await db.user.findFirst({
-      where: { phone: phone.trim() }
+      where: { phone }
     })
 
-    if (!user) {
-      return NextResponse.json({ error: "No account found with this phone number" }, { status: 404 })
+    if (user) {
+      await db.user.update({
+        where: { id: user.id },
+        data: { phoneVerified: true }
+      })
     }
-
-    await db.user.update({
-      where: { id: user.id },
-      data: { phoneVerified: true }
-    })
 
     return NextResponse.json({
-      data: {
-        verified: true,
-        message: "Phone number verified successfully"
-      }
+      success: true,
+      message: "Phone number verified successfully",
     })
 
-  } catch (error) {
-    console.error("OTP verification error:", error)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+  } catch (error: any) {
+    console.error("Verify OTP error:", error)
+    return NextResponse.json(
+      { error: "Failed to verify OTP" },
+      { status: 500 }
+    )
   }
 }

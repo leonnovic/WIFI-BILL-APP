@@ -1,69 +1,58 @@
-import { NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
 import { getServerSession } from "next-auth"
 import { authOptions } from "@/lib/auth"
 import { db } from "@/lib/db"
-import { v4 as uuidv4 } from "uuid"
 
-export async function GET(request: Request) {
+export async function GET() {
   try {
     const session = await getServerSession(authOptions)
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }
-    const userRole = (session.user as any).role
-    if (userRole !== "admin") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 })
-    }
+    if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    if ((session.user as any).role !== "admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
     const webhooks = await db.webhook.findMany({
       orderBy: { createdAt: "desc" },
-      include: {
-        user: { select: { id: true, name: true, email: true } },
-      },
+      include: { user: { select: { id: true, name: true, email: true } } },
     })
 
     return NextResponse.json({ data: webhooks })
-
   } catch (error) {
-    console.error("Admin webhooks list error:", error)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    console.error("Admin webhooks GET error:", error)
+    return NextResponse.json({ error: "Failed to fetch webhooks" }, { status: 500 })
   }
 }
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions)
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }
-    const userRole = (session.user as any).role
-    if (userRole !== "admin") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 })
-    }
+    if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    if ((session.user as any).role !== "admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
-    const adminId = (session.user as any).id
+    const userId = (session.user as any).id
     const body = await request.json()
-    const { name, url, events, secret, isActive } = body
 
-    if (!name || !url || !events) {
-      return NextResponse.json({ error: "Name, URL, and events are required" }, { status: 400 })
+    if (!body.name || !body.url) {
+      return NextResponse.json({ error: "Name and URL are required" }, { status: 400 })
     }
+
+    // events should be a JSON string
+    const eventsValue = Array.isArray(body.events)
+      ? JSON.stringify(body.events)
+      : body.events || "[]"
 
     const webhook = await db.webhook.create({
       data: {
-        name: name.trim(),
-        url: url.trim(),
-        events: Array.isArray(events) ? JSON.stringify(events) : events,
-        secret: secret || uuidv4(),
-        isActive: isActive !== false,
-        userId: adminId,
+        name: body.name,
+        url: body.url,
+        events: eventsValue,
+        secret: body.secret || null,
+        isActive: body.isActive !== false,
+        userId: body.userId || userId,
       },
     })
 
-    return NextResponse.json({ data: webhook, message: "Webhook created successfully" }, { status: 201 })
-
+    return NextResponse.json({ data: webhook }, { status: 201 })
   } catch (error) {
-    console.error("Admin create webhook error:", error)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    console.error("Admin webhooks POST error:", error)
+    return NextResponse.json({ error: "Failed to create webhook" }, { status: 500 })
   }
 }

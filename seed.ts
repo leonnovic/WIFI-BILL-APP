@@ -4,14 +4,17 @@ import bcrypt from "bcryptjs"
 async function seed() {
   console.log("🌱 Seeding database...")
 
-  // Clean up existing data
+  // Clean up existing data (order matters for foreign keys)
   await db.notification.deleteMany()
   await db.ticketResponse.deleteMany()
   await db.ticket.deleteMany()
   await db.message.deleteMany()
   await db.transaction.deleteMany()
   await db.apiKey.deleteMany()
+  await db.webhook.deleteMany()
   await db.router.deleteMany()
+  // Null out self-referential foreign keys before deleting users
+  await db.user.updateMany({ data: { activePackageId: null, memberId: null } })
   await db.package.deleteMany()
   await db.account.deleteMany()
   await db.session.deleteMany()
@@ -143,9 +146,12 @@ async function seed() {
       description: "Basic browsing and email",
       speedDown: 5,
       speedUp: 2,
-      dataLimit: 5000,
+      speed: "5Mbps",
+      dataLimitMB: 5000,
+      dataLimit: "5GB",
       price: 500,
       duration: 30,
+      durationStr: "30d",
       isActive: true,
       ispId: member.id,
     },
@@ -157,9 +163,12 @@ async function seed() {
       description: "Streaming and social media",
       speedDown: 15,
       speedUp: 5,
-      dataLimit: 15000,
+      speed: "15Mbps",
+      dataLimitMB: 15000,
+      dataLimit: "15GB",
       price: 1200,
       duration: 30,
+      durationStr: "30d",
       isActive: true,
       ispId: member.id,
     },
@@ -171,9 +180,12 @@ async function seed() {
       description: "Heavy usage, gaming, 4K streaming",
       speedDown: 50,
       speedUp: 20,
-      dataLimit: 0,
+      speed: "50Mbps",
+      dataLimitMB: 0,
+      dataLimit: "Unlimited",
       price: 3000,
       duration: 30,
+      durationStr: "30d",
       isActive: true,
       ispId: member.id,
     },
@@ -185,9 +197,12 @@ async function seed() {
       description: "1-day internet access",
       speedDown: 10,
       speedUp: 3,
-      dataLimit: 2000,
+      speed: "10Mbps",
+      dataLimitMB: 2000,
+      dataLimit: "2GB",
       price: 50,
       duration: 1,
+      durationStr: "24h",
       isActive: true,
       ispId: member.id,
     },
@@ -199,9 +214,12 @@ async function seed() {
       description: "7-day internet access",
       speedDown: 10,
       speedUp: 4,
-      dataLimit: 7000,
+      speed: "10Mbps",
+      dataLimitMB: 7000,
+      dataLimit: "7GB",
       price: 300,
       duration: 7,
+      durationStr: "7d",
       isActive: true,
       ispId: member.id,
     },
@@ -214,17 +232,17 @@ async function seed() {
 
   // Create transactions
   const transactions = [
-    { userId: client1.id, packageId: pkg2.id, type: "purchase", amount: 1200, status: "completed", mpesaRef: "QHK7Y5XBZ2", mpesaPhone: "+254723456789", mpesaReceipt: "QHK7Y5XBZ2", description: "Standard Package - 30 days" },
+    { userId: client1.id, packageId: pkg2.id, type: "purchase", amount: 1200, status: "completed", mpesaCode: "QHK7Y5XBZ2", mpesaPhone: "+254723456789", mpesaReceipt: "QHK7Y5XBZ2", description: "Standard Package - 30 days" },
     { userId: client1.id, packageId: null, type: "okoa", amount: 275, status: "completed", okoaAmount: 250, serviceFee: 25, description: "OKOA Internet Credit" },
-    { userId: client2.id, packageId: pkg1.id, type: "purchase", amount: 500, status: "completed", mpesaRef: "RMN8P3QCS1", mpesaPhone: "+254734567890", mpesaReceipt: "RMN8P3QCS1", description: "Basic Package - 30 days" },
+    { userId: client2.id, packageId: pkg1.id, type: "purchase", amount: 500, status: "completed", mpesaCode: "RMN8P3QCS1", mpesaPhone: "+254734567890", mpesaReceipt: "RMN8P3QCS1", description: "Basic Package - 30 days" },
     { userId: client2.id, packageId: null, type: "okoa", amount: 110, status: "completed", okoaAmount: 100, serviceFee: 10, description: "OKOA Internet Credit" },
-    { userId: client3.id, packageId: pkg3.id, type: "purchase", amount: 3000, status: "completed", mpesaRef: "WPL9T2MDK4", mpesaPhone: "+254745678901", mpesaReceipt: "WPL9T2MDK4", description: "Premium Package - 30 days" },
+    { userId: client3.id, packageId: pkg3.id, type: "purchase", amount: 3000, status: "completed", mpesaCode: "WPL9T2MDK4", mpesaPhone: "+254745678901", mpesaReceipt: "WPL9T2MDK4", description: "Premium Package - 30 days" },
     { userId: client3.id, packageId: null, type: "okoa", amount: 110, status: "completed", okoaAmount: 100, serviceFee: 10, description: "OKOA Internet Credit" },
-    { userId: client3.id, packageId: null, type: "repayment", amount: 200, status: "completed", mpesaRef: "BGT4F6HNJ8", description: "OKOA Repayment" },
+    { userId: client3.id, packageId: null, type: "repayment", amount: 200, status: "completed", mpesaCode: "BGT4F6HNJ8", description: "OKOA Repayment" },
     { userId: client5.id, packageId: null, type: "okoa", amount: 495, status: "completed", okoaAmount: 450, serviceFee: 45, description: "OKOA Internet Credit" },
-    { userId: client1.id, packageId: null, type: "topup", amount: 500, status: "completed", mpesaRef: "KYT2R8VPL3", mpesaPhone: "+254723456789", description: "Account Top-up" },
+    { userId: client1.id, packageId: null, type: "topup", amount: 500, status: "completed", mpesaCode: "KYT2R8VPL3", mpesaPhone: "+254723456789", description: "Account Top-up" },
     { userId: client4.id, packageId: pkg4.id, type: "purchase", amount: 50, status: "failed", mpesaPhone: "+254756789012", description: "Daily Pass - Payment failed" },
-    { userId: client2.id, packageId: null, type: "repayment", amount: 100, status: "completed", mpesaRef: "AJR6W4BKQ9", description: "OKOA Repayment" },
+    { userId: client2.id, packageId: null, type: "repayment", amount: 100, status: "completed", mpesaCode: "AJR6W4BKQ9", description: "OKOA Repayment" },
     { userId: client5.id, packageId: null, type: "okoa", amount: 495, status: "pending", okoaAmount: 450, serviceFee: 45, description: "OKOA Internet Credit - Pending" },
   ]
 
@@ -242,7 +260,7 @@ async function seed() {
   await db.router.create({
     data: {
       name: "Main Office Router",
-      ip: "192.168.1.1",
+      ipAddress: "192.168.1.1",
       username: "admin",
       password: "mikrotik123",
       model: "MikroTik RB750Gr3",
@@ -257,7 +275,7 @@ async function seed() {
   await db.router.create({
     data: {
       name: "Site A Router",
-      ip: "192.168.2.1",
+      ipAddress: "192.168.2.1",
       username: "admin",
       password: "mikrotik456",
       model: "MikroTik hAP ac²",
@@ -272,7 +290,7 @@ async function seed() {
   await db.router.create({
     data: {
       name: "Site B Router",
-      ip: "192.168.3.1",
+      ipAddress: "192.168.3.1",
       username: "admin",
       password: "mikrotik789",
       model: "MikroTik RB4011iGS+RM",
@@ -291,8 +309,8 @@ async function seed() {
       description: "My internet speed has been very slow for the past 3 days. I'm on the Standard package but getting less than 2 Mbps.",
       status: "open",
       priority: "high",
-      creatorId: client1.id,
-      assigneeId: member.id,
+      userId: client1.id,
+      assignedTo: member.id,
       ispId: member.id,
     },
   })
@@ -303,8 +321,8 @@ async function seed() {
       description: "My device shows connected but no internet access. I've tried restarting my device.",
       status: "in_progress",
       priority: "urgent",
-      creatorId: client4.id,
-      assigneeId: member.id,
+      userId: client4.id,
+      assignedTo: member.id,
       ispId: member.id,
     },
   })
@@ -315,7 +333,7 @@ async function seed() {
       description: "I was charged twice for my last package purchase. Please check.",
       status: "open",
       priority: "medium",
-      creatorId: client2.id,
+      userId: client2.id,
       ispId: member.id,
     },
   })
@@ -326,8 +344,8 @@ async function seed() {
       description: "I topped up but my OKOA balance was not reduced. Please help.",
       status: "resolved",
       priority: "medium",
-      creatorId: client3.id,
-      assigneeId: member.id,
+      userId: client3.id,
+      assignedTo: member.id,
       ispId: member.id,
     },
   })

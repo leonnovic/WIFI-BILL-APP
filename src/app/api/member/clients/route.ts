@@ -2,138 +2,73 @@ import { NextResponse } from "next/server"
 import { getServerSession } from "next-auth"
 import { authOptions } from "@/lib/auth"
 import { db } from "@/lib/db"
-import { hashPassword } from "@/lib/auth-helpers"
-import { getSMSAPI } from "@/lib/sms"
-import { getEmailService } from "@/lib/email"
+import bcrypt from "bcryptjs"
 
-export async function GET(request: Request) {
+export async function GET() {
   try {
     const session = await getServerSession(authOptions)
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }
-    const userRole = (session.user as any).role
-    if (userRole !== "member") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 })
-    }
+    if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    const userId = (session.user as any).id
+    if ((session.user as any).role !== "member") return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
-    const memberId = (session.user as any).id
-    const { searchParams } = new URL(request.url)
-    const page = parseInt(searchParams.get("page") || "1")
-    const limit = parseInt(searchParams.get("limit") || "20")
-    const search = searchParams.get("search") || ""
-    const skip = (page - 1) * limit
-
-    const where: any = { memberId, role: "client" }
-    if (search) {
-      where.OR = [
-        { name: { contains: search } },
-        { email: { contains: search } },
-        { phone: { contains: search } },
-      ]
-    }
-
-    const [clients, total] = await Promise.all([
-      db.user.findMany({
-        where,
-        skip,
-        take: limit,
-        orderBy: { createdAt: "desc" },
-        select: {
-          id: true,
-          email: true,
-          name: true,
-          phone: true,
-          isActive: true,
-          status: true,
-          okoaBalance: true,
-          okoaUsed: true,
-          connectionStatus: true,
-          packageExpiry: true,
-          createdAt: true,
-          activePackage: { select: { id: true, name: true, speed: true, price: true } },
-          _count: { select: { transactions: true, tickets: true } },
-        },
-      }),
-      db.user.count({ where }),
-    ])
-
-    return NextResponse.json({
-      data: clients,
-      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    const clients = await db.user.findMany({
+      where: { memberId: userId, role: "client" },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true, email: true, name: true, phone: true, status: true,
+        okoaBalance: true, okoaLimit: true, okoaUsed: true,
+        connectionStatus: true, activePackageId: true,
+        dataUsed: true, dataLimit: true, packageExpiry: true,
+        createdAt: true,
+        activePackage: { select: { id: true, name: true, price: true, speed: true } },
+      },
     })
 
+    return NextResponse.json({ data: clients })
   } catch (error) {
-    console.error("Member clients list error:", error)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    console.error("Member clients GET error:", error)
+    return NextResponse.json({ error: "Failed to fetch clients" }, { status: 500 })
   }
 }
 
 export async function POST(request: Request) {
   try {
     const session = await getServerSession(authOptions)
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }
-    const userRole = (session.user as any).role
-    if (userRole !== "member") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 })
-    }
+    if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    const userId = (session.user as any).id
+    if ((session.user as any).role !== "member") return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
-    const memberId = (session.user as any).id
     const body = await request.json()
-    const { email, password, name, phone } = body
+    const { name, email, phone, okoaLimit, password } = body
 
-    if (!email || !password || !name) {
-      return NextResponse.json({ error: "Email, password, and name are required" }, { status: 400 })
-    }
+    if (!email) return NextResponse.json({ error: "Email is required" }, { status: 400 })
 
-    const normalizedEmail = email.toLowerCase().trim()
-    const existing = await db.user.findUnique({ where: { email: normalizedEmail } })
-    if (existing) {
-      return NextResponse.json({ error: "Email already exists" }, { status: 409 })
-    }
+    // Check if email already exists
+    const existing = await db.user.findUnique({ where: { email } })
+    if (existing) return NextResponse.json({ error: "Email already exists" }, { status: 400 })
 
-    const hashedPassword = await hashPassword(password)
+    const hashedPassword = password ? await bcrypt.hash(password, 12) : await bcrypt.hash("client123", 12)
 
     const client = await db.user.create({
       data: {
-        email: normalizedEmail,
-        password: hashedPassword,
-        name: name.trim(),
-        phone: phone?.trim() || null,
+        name: name || "",
+        email,
+        phone: phone || null,
         role: "client",
-        memberId,
-        isActive: true,
+        memberId: userId,
+        okoaLimit: okoaLimit || 500,
+        password: hashedPassword,
         status: "active",
+        isActive: true,
         emailVerified: true,
         phoneVerified: !!phone,
       },
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        phone: true,
-        role: true,
-        isActive: true,
-        createdAt: true,
-      },
     })
 
-    // Send welcome notifications (async)
-    getEmailService().sendWelcomeEmail(normalizedEmail, name.trim(), "client").catch(err =>
-      console.error("Welcome email error:", err)
-    )
-    if (phone) {
-      getSMSAPI().sendWelcome(phone, name.trim()).catch(err =>
-        console.error("Welcome SMS error:", err)
-      )
-    }
-
-    return NextResponse.json({ data: client, message: "Client created successfully" }, { status: 201 })
-
+    const { password: _, ...safeClient } = client
+    return NextResponse.json({ data: safeClient }, { status: 201 })
   } catch (error) {
-    console.error("Member create client error:", error)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    console.error("Member clients POST error:", error)
+    return NextResponse.json({ error: "Failed to create client" }, { status: 500 })
   }
 }

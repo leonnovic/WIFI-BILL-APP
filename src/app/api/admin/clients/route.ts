@@ -1,26 +1,25 @@
-import { NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
 import { getServerSession } from "next-auth"
 import { authOptions } from "@/lib/auth"
 import { db } from "@/lib/db"
 
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions)
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }
-    const userRole = (session.user as any).role
-    if (userRole !== "admin") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 })
-    }
+    if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    if ((session.user as any).role !== "admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
     const { searchParams } = new URL(request.url)
+    const memberId = searchParams.get("memberId")
+    const status = searchParams.get("status")
+    const search = searchParams.get("search")
     const page = parseInt(searchParams.get("page") || "1")
     const limit = parseInt(searchParams.get("limit") || "20")
-    const search = searchParams.get("search") || ""
     const skip = (page - 1) * limit
 
     const where: any = { role: "client" }
+    if (memberId) where.memberId = memberId
+    if (status) where.status = status.toLowerCase()
     if (search) {
       where.OR = [
         { name: { contains: search } },
@@ -36,37 +35,20 @@ export async function GET(request: Request) {
         take: limit,
         orderBy: { createdAt: "desc" },
         select: {
-          id: true,
-          email: true,
-          name: true,
-          phone: true,
-          isActive: true,
-          status: true,
-          avatar: true,
-          okoaBalance: true,
-          okoaUsed: true,
-          connectionStatus: true,
-          packageExpiry: true,
-          createdAt: true,
-          member: {
-            select: { id: true, name: true, email: true, businessName: true },
-          },
-          activePackage: {
-            select: { id: true, name: true, speed: true, price: true },
-          },
-          _count: { select: { transactions: true, tickets: true } },
+          id: true, name: true, email: true, phone: true, status: true,
+          okoaBalance: true, okoaLimit: true, okoaUsed: true,
+          memberId: true, activePackageId: true, connectionStatus: true,
+          packageExpiry: true, createdAt: true,
+          activePackage: { select: { id: true, name: true, price: true } },
+          member: { select: { id: true, businessName: true, name: true } },
         },
       }),
       db.user.count({ where }),
     ])
 
-    return NextResponse.json({
-      data: clients,
-      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
-    })
-
+    return NextResponse.json({ data: clients, total, page, limit, totalPages: Math.ceil(total / limit) })
   } catch (error) {
-    console.error("Admin clients list error:", error)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    console.error("Admin clients GET error:", error)
+    return NextResponse.json({ error: "Failed to fetch clients" }, { status: 500 })
   }
 }
